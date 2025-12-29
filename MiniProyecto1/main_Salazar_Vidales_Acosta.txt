@@ -1,0 +1,1039 @@
+# Importación de las librerías necesarias.
+# Si necesita usar más librerías agreguelas en este espacio para mantener su código organizado.
+import os
+import glob 
+import numpy as np
+import json
+
+import cv2
+from skimage import io
+import matplotlib.pyplot as plt
+from skimage.exposure import equalize_hist
+import requests
+from PIL import Image
+from skimage.exposure import match_histograms
+
+from scipy.optimize import linear_sum_assignment
+
+from skimage.color import rgb2gray
+from skimage import exposure
+import requests
+from io import BytesIO
+from PIL import Image
+
+
+
+f_train = open("data_mp1/BCCD/train/_annotations.coco.json")
+dict_train = json.load(f_train)
+
+f_val = open("data_mp1/BCCD/valid/_annotations.coco.json")
+dict_val = json.load(f_val)
+
+f_test = open("data_mp1/BCCD/test/_annotations.coco.json")
+dict_test = json.load(f_test)
+
+
+# compruebe que la imagen sea BloodImage_00001
+bw_img = '' # Variable que contendrá la imagen de un unico canal, use la primera imagen de la base de datos de train y el canal R
+# YOUR CODE HERE
+# Ruta de la imagen
+bw_img_path = os.path.join('data_mp1', 'BCCD', 'train', "BloodImage_00001_jpg.rf.ee79407f4ce4abd4fc56f42c176d324b.jpg")
+
+# Comprobar si la imagen es la correcta
+if "BloodImage_00001" not in bw_img_path:
+    raise ValueError("La imagen no es BloodImage_00001")
+
+# Cargar la imagen en color
+img = cv2.imread(bw_img_path)
+
+# Verificar si la imagen se cargó correctamente
+if img is None:
+    raise FileNotFoundError(f"No se pudo cargar la imagen en la ruta: {bw_img_path}")
+
+# Extraer solo el canal rojo (OpenCV usa BGR, el canal R es el índice 2)
+bw_img = img[:, :, 2]
+
+# Mostrar la imagen en escala de grises (solo canal R)
+plt.figure(figsize=(6,6))
+plt.imshow(bw_img, cmap='gray')
+plt.title("Imagen Canal Rojo (BloodImage_00001)")
+plt.axis("off")
+plt.show()
+
+
+def umbralizacion_percentile(im,percentile):
+    """ Esta función umbraliza una imagen en escala de grises con un umbral por percentil.
+
+    Args:
+        im (numpy.ndarray): Imagen a umbralizar.
+        percentile (float): percentile a utilizar para realizar la umbralización.
+
+    Returns:
+        (numpy.ndarray): Imagen umbralizada.
+    
+    """
+    percentilebin_img='' #imagen umbralizada
+    # YOUR CODE HERE
+    
+    #comprobamos que la imagen este en escala de grises
+    assert len(im.shape) < 3, "La imagen debe ser en escala de grises"
+    
+    #hallamos el umbral
+    umbral = np.percentile(im, percentile)
+    
+    percentilebin_img = im < umbral
+
+    return percentilebin_img
+
+
+percentilebin_img=umbralizacion_percentile(bw_img,3)
+
+fig,ax=plt.subplots(1, 2)
+ax[0].imshow(bw_img,cmap='gray')
+ax[0].set_title('La imagen que usaremos')
+ax[0].axis('off')
+ax[1].imshow(percentilebin_img,cmap='gray')
+ax[1].set_title('Imagen umbralizada con percentiles')
+ax[1].axis('off')
+plt.show()
+
+assert np.sum(percentilebin_img)<416*416/2, 'Usted umbralizó la imagen al reves'
+assert np.isclose(np.sum(percentilebin_img),4933) or np.isclose(np.sum(percentilebin_img),4922), 'El umbral del percentile es erroneo'
+
+
+def umbralizacion_arbitrario(im,umbral):
+    """ Esta función umbraliza una imagen en escala de grises con un umbral arbitrario.
+
+    Args:
+        im (numpy.ndarray): Imagen a umbralizar.
+        umbral (int): umbral a utilizar
+
+    Returns:
+        (numpy.ndarray): Imagen umbralizada.
+    
+    """
+    arbitrarybin_img='' #imagen umbralizada
+    # YOUR CODE HERE
+    
+    arbitrarybin_img = im < umbral 
+
+    
+    return arbitrarybin_img
+
+
+arbitrarybin_img=umbralizacion_arbitrario(bw_img,170)
+
+fig,ax=plt.subplots(1,2)
+ax[0].imshow(bw_img,cmap='gray')
+ax[0].set_title('Imagen original')
+ax[0].axis('off')
+ax[1].imshow(arbitrarybin_img,cmap='gray')
+ax[1].set_title('Imagen umbralizada (umbral arbitrario)')
+ax[1].axis('off')
+plt.tight_layout()
+plt.show()
+
+assert np.sum(arbitrarybin_img)<416*416/2, 'Usted umbralizó la imagen al reves'
+assert np.isclose(np.sum(arbitrarybin_img),14952) or np.isclose(np.sum(arbitrarybin_img),14950), 'La umbralización fue erroneo'
+
+
+def deteccion(mask,umbral):
+    """ Esta función toma una imagen ya umbralizada y da como resultado la detección correspondiente.
+
+    Args:
+        mask (numpy.ndarray): Imagen donde se quiere detectar el glóbulo blanco.
+        umbral (int): Área mínima que debe ocupar un glóbulo blanco para ser considerado como tal.
+        Si el área del elemento conexo más grande no supera el umbral entonces retornaremos None en X, Y, W, H
+        
+    Returns:
+        (int): coordenada X, (int): coordenada Y, (int): ancho de la caja (W), (int): alto de la caja (H)
+    """
+    # YOUR CODE HERE
+    mask = mask.astype(np.uint8)
+    
+    x, y, w, h = None, None, None, None #creamos las variables de la caja 
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8) #obtenemos las propiedades de la máscara
+    area_maxima = 0 #creamos una variable para guardar la área máxima
+    
+    for i in range(1, num_labels): #en el rango del total de componentes conexos ignorando el fondo
+        componente_x, componente_y, componente_ancho, componente_alto, area = stats[i] #obtenemos las propiedades de cada componente conexo
+    
+        if area > area_maxima and area >= umbral: #si el area es mayor al área maxima y al umbral
+            area_maxima = area #guardamos el area como área máxima
+            x, y, w, h = componente_x, componente_y, componente_ancho, componente_alto #guardamos las propiedades de x, y, w y h
+            
+    return x, y, w, h
+
+
+img_1 = io.imread(glob.glob(os.path.join('.','data_mp1','BCCD','train','*.jpg'))[0])[:,:,0]
+percentilebin_img_1 = umbralizacion_percentile(img_1, 3)
+
+assert deteccion(percentilebin_img, 1000) == (69, 319, 87, 89), 'La detección no fue correcta'
+
+img_2 = io.imread(glob.glob(os.path.join('.','data_mp1','BCCD','train','*.jpg'))[17])[:,:,0]
+percentilebin_img_2 = umbralizacion_percentile(img_2, 3)
+
+assert deteccion(percentilebin_img_2, 1000) == (178, 11, 72, 118), 'La detección no fue correcta'
+
+
+def diccionario_prediccion(image,image_id,segmentation_method,dato=None):
+    """ Esta función toma una imagen, junto a el image_id, junto al método de segmentación y un parámetro adicional dato.
+        Luego, retorna un diccionario con la predicción de la anotación.
+
+    Args:
+        image (numpy.ndarray):  Imagen de entrada de 1 canal.
+        image_id (int): Identificador de la imagen.
+        segmentation_method (str): Puede ser "percentile" o "arbitrario"
+        dato (int or None): Si se requiere un dato adicional como en la función percentile o arbitrario, este parametró será el umbral o el percentil
+        
+    Returns:
+        (dict): diccionario con llaves: images_id, category_id, bbox, score. 
+        Correspondiente a la predicción del algoritmo sobre donde está el glóbulo blanco.
+    """
+    dict_deteccion={} #diccionario de prediccion
+    # YOUR CODE HERE
+    
+    dict_deteccion["image_id"] = image_id #asignamos a la llave de "image_id" la ingresada por parametro
+    
+    if segmentation_method == "percentile": #si el metodo de segmentación es percentile
+        
+        percentile = umbralizacion_percentile(image, dato) #utilizamos la umbralización por percentile
+        
+        dict_deteccion["bbox"] = deteccion(percentile, 1000) #hallamos las dimensiones de bbox de acuerdo a la imagen umbralizada
+        
+        x, y, w, h = list(deteccion(percentile, 1000)) #hallamos las dimensiones de bbox
+
+        imagen_binaria = percentile > 0 #creamos una imagen binaria en base a la imagen umbralizada
+        area_bbox = imagen_binaria[y:y+h, x:x+w] #hallamos el area delimitada por el bbox
+        pixeles_correspondientes = np.sum(area_bbox) #hallamos la cantidad de pixeles que son detectados como objeto de interés
+        total_pixeles = area_bbox.size #hallamos el total de pixeles en el bbox
+        dict_deteccion["score"] = pixeles_correspondientes/total_pixeles #hallamos el score
+        
+        
+    elif segmentation_method == "arbitrario": #si el metodo de segmentación es arbitrario
+        arbitrario = umbralizacion_arbitrario(image, dato) #utilizamos la umbralización arbitraria
+        dict_deteccion["bbox"] = list(deteccion(arbitrario, 1000)) #hallamos las dimensiones de bbox de acuerdo a la imagen umbralizada
+        imagen_binaria = arbitrario > 0 #creamos una imagen binaria en base a la imagen umbralizada
+        x, y, w, h = list(deteccion(arbitrario, 1000)) #hallamos las dimensiones de bbox
+        area_bbox = imagen_binaria[y:y+h, x:x+w] #hallamos el area delimitada por el bbox
+        pixeles_correspondientes = np.sum(area_bbox) #hallamos la cantidad de pixeles que son detectados como objeto de interés
+        total_pixeles = area_bbox.size #hallamos el total de pixeles en el bbox
+        dict_deteccion["score"] = pixeles_correspondientes/total_pixeles #hallamos el score
+        
+    anotaciones_train = dict_train["annotations"] #obtenemos el diccionario de las anotaciones de entrenamiento 
+    for i in anotaciones_train: #para cada elemento en las anotaciones de entrenamiento
+        if i["image_id"] == image_id: #si el id de la imagen es igual al image_id ingresado por parametro
+            dict_deteccion["category_id"] = i["category_id"] #almacenamos la categoria de dicha imagen
+
+    anotaciones_val = dict_val["annotations"] #obtenemos el diccionario de las anotaciones de validación 
+    for i in anotaciones_val: #para cada elemento en las anotaciones de validación
+        if i["image_id"] == image_id: #si el id de la imagen es igual al image_id ingresado por parametro
+            dict_deteccion["category_id"] = i["category_id"] #almacenamos la categoria de dicha imagen
+
+    anotaciones_test = dict_test["annotations"] #obtenemos el diccionario de las anotaciones de test
+    for i in anotaciones_test: #para cada elemento en las anotaciones de test
+        if i["image_id"] == image_id: #si el id de la imagen es igual al image_id ingresado por parametro
+            dict_deteccion["category_id"] = i["category_id"] #almacenamos la categoria de dicha imagen
+        
+    return dict_deteccion
+
+
+with open(os.path.join('data_mp1','BCCD','train','_annotations.coco.json'),'rb') as f:
+    anots=json.load(f)
+
+im_name=anots['images'][0]['file_name']
+id_image=anots['images'][0]['id']
+path=os.path.join('.','data_mp1','BCCD','train',im_name)
+image=io.imread(path)
+dict_predict=diccionario_prediccion(image[:,:,0],id_image,'percentile', 3)
+
+assert type(dict_predict)==dict, 'El dict_predict deberia ser un diccionario'
+assert 'image_id' in dict_predict.keys(), 'El diccionario de detección no tiene la llave "image_id"'
+assert 'category_id' in dict_predict.keys(), 'El diccionario de detección no tiene la llave "category_id"'
+assert 'bbox' in dict_predict.keys(), 'El diccionario de detección no tiene la llave "bbox"'
+assert 'score' in dict_predict.keys(), 'El diccionario de detección no tiene la llave "score"'
+assert dict_predict['score'] >=0 and dict_predict['score'] <=1, 'El score debe estar entre 0 y 1'
+assert len(dict_predict['bbox'])==4, 'La bbox deberia tener 4 valores'
+
+X,Y,W,H= dict_predict['bbox']
+mask=umbralizacion_percentile(image[:,:,0], 3)
+assert np.isclose(np.sum(mask[Y:Y+H,X:X+W])/(H*W),dict_predict['score']), 'El score está mal calculado, puede que ester usando las filas como columnas y viseversa'
+assert np.isclose(W, 87) and (np.isclose(H, 114) or np.isclose(H,116)), 'El tamaño de la caja es erroneo'
+assert np.isclose(X, 260, 0.01), 'Hay un error en la detección'
+assert np.isclose(Y, 113, 0.01) or np.isclose(Y, 111, 0.01), 'Hay un error en la detección'
+
+plt.imshow(cv2.rectangle(image,(X,Y),(X+W,Y+H),(255,0,0),3))
+plt.axis('off')
+plt.show()
+
+
+from skimage.io import imread
+
+def prediccion_total(fold,segmentation_method,dato=None):
+    """ Esta función toma una imagen, junto a el image_id, junto al método de segmentación y un parámetro adicional dato.
+        Luego, retorna un diccionario con la predicción de la anotación.
+
+    Args:
+        fold (str): Puede ser "train", "valid" o "test"
+        segmentation_method (str): Puede ser "percentile" o "arbitrario"
+        dato (int or None): Si se requiere un dato adicional como en la función percentile o arbitrario, este parametró será el umbral o el percentil
+        
+    Returns:
+        (list): Lista de diccionarios. Los diccionarios son los generados por la función diccionario_prediccion.
+    """
+    list_predict=[] #lista de diccionarios de prediccion
+    # YOUR CODE HERE
+
+    #seleccionamos las imagenes de acuerdo a la carpeta ingresada por parametro
+    if fold == "train":
+        imagenes = dict_train["images"]
+    elif fold == "valid":
+        imagenes = dict_val["images"]
+    elif fold == "test":
+        imagenes = dict_test["images"]
+
+    for i in imagenes: #para cada imagen de la carpeta seleccionada
+        image_id = i["id"] #almacenamos el id de la imagen
+        im_name = i["file_name"] #almacenamos el nombre de la imagen
+        image_path = os.path.join('.','data_mp1','BCCD', fold, im_name) #obtenemos la ruta de la imagen
+        imagen = imread(image_path, as_gray=True) #leemos la imagen y la convertimos a escalada de grises
+
+        dict_predict = diccionario_prediccion(imagen, image_id, segmentation_method, dato) #generamos el diccionario de predicción
+        list_predict.append(dict_predict) #agregamos a la lista de predicciones
+
+    return list_predict
+
+
+list_predict=prediccion_total('train','percentile',3)
+
+
+assert type(list_predict) ==list, 'Las detecciones deberian ser una lista de diccionarios'
+assert type(list_predict[0])==dict, 'Los elementos de la lista deberian ser diccionarios'
+assert len(list_predict)==len(anots['images']), 'Su lista de predicciones debe ser igual a la cantidad de imagenes'
+
+id_image=anots['images'][0]['id']
+for i in range(len(list_predict)):
+    if list_predict[i]['image_id']==id_image:
+        im_name=anots['images'][i]['file_name']
+        dict_predict=list_predict[i]
+
+for i in anots['annotations']:
+    if i['image_id']==id_image and i['category_id']==3:
+        dict_anot=i
+path=os.path.join('.','data_mp1','BCCD','train',im_name)
+image=io.imread(path)
+X,Y,W,H= dict_predict['bbox']
+
+x,y,w,h=dict_anot['bbox']
+
+fig,ax=plt.subplots(1,2)
+ax[0].imshow(cv2.rectangle(image,(X,Y),(X+W,Y+H),(255,0,0),3))
+ax[0].axis('off')
+ax[0].set_title('Predicción')
+path=os.path.join('.','data_mp1','BCCD','train',im_name)
+image=io.imread(path)
+ax[1].imshow(cv2.rectangle(image,(x,y),(int(x+w),int(y+h)),(255,0,0),3))
+ax[1].axis('off')
+ax[1].set_title('Anotación')
+plt.show()
+
+
+list_val_predict='' #Lista de predicciones para el fold valid usando el baseline
+# YOUR CODE HERE
+list_val_predict = prediccion_total("valid",'percentile',3)
+
+
+def jaccard(A, P):
+    """ Esta función devuelve el indice de jaccard para un par anotación-predicción.
+    
+    Args:
+        A (numpy.ndarray): Máscara de anotación.
+        P (numpy.ndarray): Máscara de predicción.
+
+    Returns:
+        (float): Indice de jaccard calculado
+    """
+    # YOUR CODE HERE
+    
+    if len(A.shape) > 2: #verificamos que la mascara de anotación este en escala de grises
+        A = A[:,:,0] #en caso de que no, la convertimos
+        
+    if len(P.shape) > 2: #verificamos que la mascara de predicciones este en escala de grises
+        P = P[:,:,0] #en caso de que no, la convertimos
+
+    A = A > 0 #Transformamos la mascara de anotaciones a una imagen binaria
+    P = P > 0 #Transformamos la mascara de predicciones a una imagen binaria
+        
+    interseccion= np.sum((A*P)) # multiplicamos ambas mascaras y sumamos el resultado para obtener la intersección
+    union= np.sum(A) + np.sum(P) - interseccion #obtenemos la unión entre ambas mascaras
+    jaccard_value = interseccion/union #dividimos la interseccion entre la union para calcular el indice de jaccard
+    
+    return jaccard_value
+
+def bounding_box(X,Y,W,H):
+    """ Esta función crea un arreglo de tamaño 500 X 500 que contiene 1s o píxeles encendidos dadas las coordenadas.
+
+    Args:
+        X (float): Coordenada x dentro del arreglo para la esquina superior izquierda.
+        Y (float): Coordenada y dentro del arreglo para la esquina superior izquierda.
+        W (float): Ancho de la caja.
+        H (float): Altura de la caja.
+
+    Returns:
+        (numpy.ndarray): arreglo (imagen) con la caja determinada por lo parámetros. 
+    
+    """
+    #Convertimos las coordenadas a valores enteros
+    X = int(X) 
+    Y = int(Y)
+    W = int(W)
+    H = int(H)
+    
+    A = np.zeros((500, 500)) #creamos el arreglo vacio de acuerdo con el tamaño solicitado
+    
+    # Calcular las coordenadas para la esquina inferior derecha de la caja, con el ciudado de no pasar el límite
+    X_ = min(X + W, 500)
+    Y_ = min(Y + H, 500)
+    
+    A[Y:Y_, X:X_] = 1 #"Encendemos" los pixeles de acuerdo a las coordenadas de la caja
+    return A
+
+def verificar_coincidencia(anotacion, prediccion, j_umbral):
+    """ Esta función le entra una anotación y una predicción y determina si corresponde a lo mismo o no.
+
+    Args:
+        anotacion (dict): diccionario que contiene la información acerca de una anotación.
+        prediccion (dict): diccionario que contiene la información acerca de una predicción.
+        j_umbral (float): valor que corresponde al umbral de jaccard bajo el que se determinará la coincidencia.
+
+    Returns:
+        (bool): True si la anotación y predicción son lo suficientemente similares,
+        (float): valor de jaccard calculado mediante la función de jaccard. Recuerde que no es lo mismo que el umbral de jaccard.
+    """
+    superposicion = '' # Si la predicción y la anotación corresponden a lo mismo.
+    # YOUR CODE HERE
+    
+    jaccard_value = jaccard(np.array(anotacion["bbox"]), np.array(prediccion["bbox"])) #calculamos el indice de jaccard con la primera
+    #función realizada
+    
+    superposicion = jaccard_value >= j_umbral #verificamos si el indice de jaccard es igual o mayor el umbral de jaccard para saber
+    #si la anotación y predicción son lo suficientemente similares
+    
+    return superposicion, jaccard_value
+
+def evaluacion_por_imagen(anotaciones, predicciones, j_umbral):
+    """ Esta función evalua cuantos falsos positivos, falsos negativos y verdaderos positivos hay .
+
+    Args:
+        anotaciones (list): lista de diccionarios que contiene las anotaciones. 
+                            Cada diccionario contiene la información de una anotación. 
+        predicciones (list): lista de diccionarios que contiene las predicciones.
+                             Cada diccionario contiene la información de una predicción.
+        j_umbral (float): valor que corresponde al umbral de jaccard bajo el que se determinará la coincidencia.
+    
+    Returns:
+        (int): verdaderos positivos, (int): falsos positivos, (int): falsos negativos
+    """
+    
+    # YOUR CODE HERE
+    
+    num_anotaciones = len(anotaciones) #obtenemos la longitud de las anotaciones
+    num_predicciones = len(predicciones) #obtenemos la longitud de las predicciones
+
+    # Manejamos los casos en donde no hay anotaciones o predicciones
+    if num_anotaciones == 0:
+        return 0, num_predicciones, 0
+
+    if num_predicciones == 0:
+        return 0, 0, num_anotaciones
+
+    cost_matrix = np.ones((num_anotaciones, num_predicciones)) # iniciamos la matriz de costos (1 - jaccard) con las dimensiones de anotaciones y predicciones 
+
+    for i, annotaccion in enumerate(anotaciones):
+        for j, prediccion in enumerate(predicciones):
+            _, jaccard_value = verificar_coincidencia(annotaccion, prediccion, j_umbral)
+            cost_matrix[i, j] = 1 - jaccard_value
+
+    # Resolver la asignación óptima
+    annotation_indices, prediction_indices = linear_sum_assignment(cost_matrix)
+
+    # Contar verdaderos positivos (TP)
+    TP = sum(
+        1 for i, j in zip(annotation_indices, prediction_indices)
+        if (1 - cost_matrix[i, j]) >= j_umbral)
+
+    # Falsos positivos (FP) = predicciones no emparejadas
+    FP = num_predicciones - TP
+    # Falsos negativos (FN) = anotaciones no emparejadas
+    FN = num_anotaciones - TP
+    return TP, FP, FN
+
+def evaluacion(anotaciones, predicciones, j_umbral, c_umbral):
+    """ Esta función evalua cuantos falsos positivos, falsos negativos y verdaderos positivos.
+
+    Args:
+        anotaciones (dict): diccionario de lista de diccionarios que contiene las anotaciones. 
+                            Cada diccionario contiene la información de una anotación. 
+        predicciones (list): lista de diccionarios que contiene las predicciones.
+                             Cada diccionario contiene la información de una anotación.
+        j_umbral (float): valor que corresponde al umbral de jaccard bajo el que se determinará la coincidencia.
+        c_umbral (float): valor que corresponde al umbral de confianza bajo el que se determinará si un predicción cuenta o no.
+    
+    Returns:
+        (int): verdaderos positivos, (int): falsos positivos, (int): falsos negativos
+    """
+    # YOUR CODE HERE
+    #Filtrar las anotaciones para solo obtener las que tengan category_id == 3.
+    anotaciones_filtradas = [anotacion for anotacion in anotaciones["annotations"] if anotacion["category_id"] == 3]
+    
+    #Filtrar las predicciones, borrando las que tenga un score inferior al umbral.
+    predicciones_filtradas = [prediccion for prediccion in predicciones if prediccion["score"] >= c_umbral
+                              and prediccion["category_id"] == 3]
+    
+    #Creando un diccionario donde la llave sea el image_id 
+    diccionario_imagenes = {}
+    for anotacion in anotaciones_filtradas:
+        if anotacion["image_id"] not in diccionario_imagenes:
+            
+            #los valores sean diccionarios que a su vez posean como llaves "anotaciones" y "predicciones".
+            diccionario_imagenes[anotacion["image_id"]] = {"anotaciones": [], "predicciones": []}
+            
+        # Los valores de los diccionarios internos serán listas con las anotaciones o predicciones correspondientes.
+        diccionario_imagenes[anotacion["image_id"]]["anotaciones"].append(anotacion)
+        
+    #Repetimos el proceso para las predicciones
+    for prediccion in predicciones_filtradas:
+        if prediccion["image_id"] not in diccionario_imagenes:
+            diccionario_imagenes[prediccion["image_id"]] = {"anotaciones": [], "predicciones": []}
+
+        diccionario_imagenes[prediccion["image_id"]]["predicciones"].append(prediccion)
+        
+    #Finalmente, utilizaremos la función anterior para determinar la cantidad de TP, FP y FN dentro de toda la base de datos.
+    TP = 0
+    FP = 0
+    FN = 0
+    for image_id, image_data in diccionario_imagenes.items():
+        TP_local, FP_local, FN_local = evaluacion_por_imagen(image_data["anotaciones"], image_data["predicciones"], j_umbral)
+        TP += TP_local
+        FP += FP_local
+        FN += FN_local
+
+    return TP, FP, FN
+    
+
+def Metricas(anotaciones, predicciones, j_umbral, c_umbral):
+    """ Esta función utiliza la función anterior para calcular los TP, FP y FN y luego calcula las métricas
+
+    Args:
+        anotaciones (dict): lista de diccionarios que contiene las anotaciones. 
+                            Cada diccionario contiene la información de una anotación. 
+        predicciones (list): lista de diccionarios que contiene las predicciones.
+                             Cada diccionario contiene la información de una anotación.
+        j_umbral (float): valor que corresponde al umbral de jaccard bajo el que se determinará la coincidencia.
+        c_umbral (float): valor que corresponde al umbral de confianza bajo el que se determinará si un predicción cuenta o no.
+
+    Returns:
+        (float): precision, (float): cobertura, (float): f-medida.
+    """
+    # YOUR CODE HERE
+    #TP representa los verdaderos positivos, FP falsos positivos y FN Falsos negativos
+    TP, FP, FN = evaluacion(anotaciones, predicciones, j_umbral, c_umbral)
+    
+    #P la precision se calcula como el cociente entre TP y (TP + FP + e)
+    P = TP / (TP + FP + 1e-6)
+    C = TP / (TP + FN + 1e-6)
+    F = 2 * (P * C) / (P + C + 1e-6)
+    return P,C,F
+
+def Curvas_P_C(anotaciones,predicciones,jaccard):
+    """ Esta función calcula la curva de precisión y cobertura utilizando las funciones anteriores.
+
+    Args:
+        anotaciones (dict): lista de diccionarios que contiene las anotaciones. 
+                            Cada diccionario contiene la información de una anotación. 
+        predicciones (list): lista de diccionarios que contiene las predicciones.
+                             Cada diccionario contiene la información de una anotación.
+        jaccard (float): valor que corresponde al umbral de jaccard bajo el que se determinará la coincidencia.
+
+    Returns:
+        (list): precision, (list): cobertura, (float): f-medida máxima, (float): umbral donde la f-medida es máxima.
+    """
+    # YOUR CODE HERE
+    umbral = np.linspace(0.1, 1.0, 100) #creamos el umbral
+    Pr = [] #creamos una lista para almacenar las predicciones
+    Co = [] #creamos una lista para almacenar las coberturas
+    F = [] #creamos una lista para almacenar las F medias
+    F_max = 0 #creamos una variable que tendrá el F máximo
+    umbral_max = 0 #creamos una variable que tendrá el umbral máximo
+    
+    for i in umbral: #para cada elemento en el umbral
+        Pr.append(Metricas(anotaciones,predicciones,jaccard,i)[0]) #hallar y almacenar todas las predicciones
+        Co.append(Metricas(anotaciones,predicciones,jaccard,i)[1]) #hallar y almacenar todas las anotaciones
+        F.append(Metricas(anotaciones,predicciones,jaccard,i)[2]) #hallar y almacenar todas las F-medias
+    
+    j = 0 #variable para iterar
+    while j < len(F):
+        if F_max < F[j]: 
+            F_max = F[j] #Almcacenar la F media mayor
+            umbral_max = umbral[j] #Almcacenar el umbral que corresponde a la F media mayor
+        j += 1
+        
+    return Pr,Co,F_max,umbral_max
+
+def mAP(precision,cobertura):
+    """ Esta función calcula el mAP para una curva de precisión y cobertura
+
+    Args:
+        precision (numpy.ndarray): Arreglo que contiene los valores de precisión para diferentes umbrales.
+        cobertura (numpy.ndarray): Arreglo que contiene los valores de cobertura para diferentes umbrales.
+
+    Returns:
+        (float): Valor de mAP.
+    """
+    A=0
+    for i in range(len(cobertura)-1):
+        A+=(cobertura[i]-cobertura[i+1])*precision[i]
+    return A
+
+
+
+with open(os.path.join('data_mp1','BCCD','valid','_annotations.coco.json'),'rb') as f:
+    anots=json.load(f)
+    
+p=np.arange(0.0001,1.0001,0.0001)
+for f in np.arange(0.0,1.2,0.1): #saltos de 0.1 desde una F medida de 0 hasta una F medida de 1
+    aux=np.zeros(len(p))
+    for i in range(len(p)):
+        k=(2*p[i]-f)
+        if k>0.001:
+            c=f*p[i]/k
+            aux[i]=c
+    c=np.copy(aux)
+    c=c*(c<=1)
+    l2=np.where(c!=0)[0]
+    C=c[l2]
+    P=p[l2]
+    plt.plot(C,P,'r--')
+Pr1,Co1,F1,umbral1=Curvas_P_C(anots,list_val_predict,0.4)
+Pr2,Co2,F2,umbral2=Curvas_P_C(anots,list_val_predict,0.3)
+Pr3,Co3,F3,umbral3=Curvas_P_C(anots,list_val_predict,0.2)
+plt.plot(Co1,Pr1,label='J=0.4')
+plt.plot(Co2,Pr2,label='J=0.3')
+plt.plot(Co3,Pr3,label='J=0.2')
+plt.xlabel('Cobertura')
+plt.ylabel('Precision')
+plt.legend()
+plt.show()
+
+mAP_04=mAP(Pr1,Co1)
+mAP_03=mAP(Pr2,Co2)
+mAP_02=mAP(Pr3,Co3)
+
+print(f'J=0.4, mAP= {mAP_04}')
+print(f'J=0.3, mAP= {mAP_03}')
+print(f'J=0.2, mAP= {mAP_02}')
+
+
+def view_pred(num_im,fold,list_predict):
+    """ Esta función visualiza las predicciones y anotaciones para una imagen en un fold.
+
+    Args:
+        num_im (int): número que indica la posición de la imagen dentro del fold
+        fold (str): indica el fold sobre el que se buscará la imagen. Puede ser "train", "valid" o "test"
+        list_predict (list): Lista con las predicciones del fold correspondiente
+
+    Returns:
+        (None)
+    """
+    with open(os.path.join('data_mp1','BCCD',fold,'_annotations.coco.json'),'rb') as f:
+        anots=json.load(f)
+    id_image=anots['images'][num_im]['id']
+    for i in range(len(list_predict)):
+        if list_predict[i]['image_id']==id_image:
+            im_name=anots['images'][i]['file_name']
+            dict_predict=list_predict[i]
+
+    for i in anots['annotations']:
+        if i['image_id']==id_image and i['category_id']==3:
+            dict_anot=i
+    path=os.path.join('.','data_mp1','BCCD',fold,im_name)
+    image=io.imread(path)
+    X,Y,W,H= dict_predict['bbox']
+    x,y,w,h=dict_anot['bbox']
+    anotacion=bounding_box(x,y,w,h)
+    prediccion=bounding_box(X,Y,W,H)
+    Interseccion=np.sum(anotacion*prediccion)
+    Union=np.sum(anotacion)+np.sum(prediccion)-Interseccion
+    J=Interseccion/Union
+    print(J)
+    fig,ax=plt.subplots(1,2)
+    ax[0].imshow(cv2.rectangle(image,(X,Y),(X+W,Y+H),(255,0,0),3))
+    ax[0].axis('off')
+    ax[0].set_title('Predicción')
+    path=os.path.join('.','data_mp1','BCCD',fold,im_name)
+    image=io.imread(path)
+    ax[1].imshow(cv2.rectangle(image,(x,y),(int(x+w),int(y+h)),(255,0,0),3))
+    ax[1].axis('off')
+    ax[1].set_title('Anotación')
+    plt.show()
+
+
+view_pred(1,'valid',list_val_predict)
+
+
+view_pred(4,'valid',list_val_predict)
+
+
+view_pred(31,'valid',list_val_predict)
+
+
+bw_img = '' # Variable que contendrá la imagen de un unico canal
+# YOUR CODE HERE
+
+bw_img_path = os.path.join('data_mp1', 'BCCD', 'valid', "BloodImage_00221_jpg.rf.982c78efdea1c3e313d3da193916930a.jpg")
+bw_img= cv2.imread(bw_img_path)
+bw_img = bw_img[:,:,0]
+
+
+assert len(bw_img.shape)==2,f'La imagen tiene mas dimensiones de las esperadas ({len(bw_img.shape)}). Deberían ser 2'
+assert bw_img.shape == (416,416) , f'La imagen tiene un tamaño inesperad0 {(bw_img.shape)}. Debería ser (416,416)'
+plt.imshow(bw_img,cmap='gray')
+plt.title('la imagen que usaremos')
+plt.axis('off')
+plt.show()
+
+
+def gamma_trans(image,gamma):
+    """ Esta función realiza una transformación gamma a la imagen.
+
+    Args:
+        image (numpy.ndarray): Imagen en escala de grises.
+        gamma (float): gamma con la cual realizar la transformación gamma a la imagen.
+
+    Returns:
+        (numpy.ndarray): Imagen transformada
+    """
+    # YOUR CODE HERE
+    # Verificar que la imagen esté en escala de grises (debería ser bidimensional)
+    assert len(image.shape)==2,f'La imagen tiene mas dimensiones de las esperadas ({len(image.shape)}). Deberían ser 2' 
+    image_normalized = image / 255.0
+    new_img = np.power(image_normalized, gamma)
+    new_img = np.clip(new_img, 0, 1)
+    return new_img
+
+
+tgamma_img = gamma_trans(bw_img,2)
+import numpy as np
+assert np.min(tgamma_img)>=0, f'el limite inferior del rango de la imagen es negativo ({np.min(tgamma_img)})'
+assert np.max(tgamma_img)<=1, f'el limite inferior del rango de la imagen es mayor a 1 ({np.max(tgamma_img)})'
+plt.imshow(tgamma_img,cmap='gray')
+plt.title('Imagen alterada mediante el uso de transformacion gamma = 2')
+plt.axis('off')
+plt.show()
+
+
+
+img_1 = gamma_trans(bw_img, 6)
+img_2 = gamma_trans(bw_img, 0.2)
+
+fig, ax = plt.subplots(2, 2)
+
+ax[0, 0].imshow(img_1, cmap = 'gray')
+ax[0, 0].axis('off')
+
+ax[1, 0].imshow(img_2, cmap = 'gray')
+ax[1, 0].axis('off')
+
+# Utilizamos la siguiente función para hacer el histograma
+counts_1, bins_1 = np.histogram(img_1, bins = 256, range = (0, 1))
+# Volvemos el histograma a un función de probabilidad
+counts_1 = counts_1 / np.sum(counts_1)
+# Mostramos el histograma
+_ = ax[0, 1].hist(bins_1[:-1], bins_1, weights=counts_1, range=(0, 1))
+
+# Utilizamos la siguiente función para hacer el histograma
+counts_2, bins_2 = np.histogram(img_2, bins = 256, range = (0, 1))
+# Volvemos el histograma a un función de probabilidad
+counts_2 = counts_2 / np.sum(counts_2)
+# Mostramos el histograma
+_ = ax[1, 1].hist(bins_2[:-1], bins_2, weights=counts_2, range=(0, 1))
+
+ax[0, 0].set_title('Imagen transformada \ncon gamma = 6')
+ax[0, 1].set_title('Histograma de imagen transformada \ncon gamma = 6')
+
+ax[1, 0].set_title('Imagen transformada \ncon gamma = 0.2')
+ax[1, 1].set_title('Histograma de imagen transformada \ncon gamma = 0.2')
+
+plt.tight_layout()
+
+
+
+#A continuación realizamos el proceso para el canal azul (Con el objetivo de comparar esto en el informe)
+bw_img_path1 = os.path.join('data_mp1', 'BCCD', 'valid', "BloodImage_00221_jpg.rf.982c78efdea1c3e313d3da193916930a.jpg")
+bw_img2= cv2.imread(bw_img_path1)
+canal_blue = bw_img2[:, :, 2]
+plt.imshow(canal_blue,cmap='gray')
+plt.title('Imagen utilizada')
+plt.axis('off')
+plt.show()
+
+
+
+
+img_1 = gamma_trans(canal_blue, 6)
+img_2 = gamma_trans(canal_blue, 0.2)
+
+fig, ax = plt.subplots(2, 2)
+
+ax[0, 0].imshow(img_1, cmap = 'gray')
+ax[0, 0].axis('off')
+
+ax[1, 0].imshow(img_2, cmap = 'gray')
+ax[1, 0].axis('off')
+
+# Utilizamos la siguiente función para hacer el histograma
+counts_1, bins_1 = np.histogram(img_1, bins = 256, range = (0, 1))
+# Volvemos el histograma a un función de probabilidad
+counts_1 = counts_1 / np.sum(counts_1)
+# Mostramos el histograma
+_ = ax[0, 1].hist(bins_1[:-1], bins_1, weights=counts_1, range=(0, 1))
+
+# Utilizamos la siguiente función para hacer el histograma
+counts_2, bins_2 = np.histogram(img_2, bins = 256, range = (0, 1))
+# Volvemos el histograma a un función de probabilidad
+counts_2 = counts_2 / np.sum(counts_2)
+# Mostramos el histograma
+_ = ax[1, 1].hist(bins_2[:-1], bins_2, weights=counts_2, range=(0, 1))
+
+ax[0, 0].set_title('Imagen transformada \ncon gamma = 6')
+ax[0, 1].set_title('Histograma de imagen transformada \ncon gamma = 6')
+
+ax[1, 0].set_title('Imagen transformada \ncon gamma = 0.2')
+ax[1, 1].set_title('Histograma de imagen transformada \ncon gamma = 0.2')
+
+plt.tight_layout()
+
+
+tequ_img = '' # Variable que contendrá la imagen alterada usando la ecualización
+# YOUR CODE HERE
+
+tequ_img = exposure.equalize_hist(bw_img, nbins=256, mask=None)
+
+
+assert np.min(tequ_img)>=0, f'el limite inferior del rango de la imagen es negativo ({np.min(tequ_img)})'
+assert np.max(tequ_img)<=1, f'el limite inferior del rango de la imagen es mayor a 1 ({np.max(tequ_img)})'
+plt.imshow(tequ_img,cmap='gray')
+plt.title('Imagen alterada mediante ecualización')
+plt.axis('off')
+plt.show()
+
+
+tesp_img = '' # Variable que contendrá la imagen alterada usando la ecualización1
+# YOUR CODE HERE
+
+#descargamos la imagen de internet
+url = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQyM5MTczQVYkFeOfiknl6WGzH1RqXgiugiJw&s"
+descargar = requests.get(url)
+imagen = Image.open(BytesIO(descargar.content))
+
+imagen_gris = imagen.convert("L") #transformamos la imagen a escala de grises
+imagen_array = np.array(imagen_gris) #convertimos la imagen en un array
+
+tesp_img = exposure.match_histograms(bw_img, imagen_array) 
+
+
+assert np.min(tesp_img)>=0, f'el limite inferior del rango de la imagen es negativo ({np.min(tesp_img)})'
+assert np.max(tesp_img)<=255, f'el limite inferior del rango de la imagen es mayor a 1 ({np.max(tesp_img)})'
+plt.imshow(tesp_img,cmap='gray')
+plt.title('Imagen alterada mediante especificacion')
+plt.axis('off')
+plt.show()
+
+
+def prediccion_total(fold,segmentation_method,preproc=None,gamma=None,image_objetivo=None,dato=None):
+    """ Esta función toma una imagen, junto a el image_id, junto al método de segmentación y un parámetro adicional dato.
+        Luego, retorna un diccionario con la predicción de la anotación.
+
+    Args:
+        fold (str): Puede ser "train", "valid" o "test"
+        segmentation_method (str): Puede ser "percentile" o "arbitrario"
+        preproc (str | None): puede ser "gamma", "ecualizacion" o "especificacion"
+        gamma (float | None): valor de gamma para realizar la transformación gamma.
+        image_objetivo (str | None): URL de imagen objetivo para realizar la especificación
+        dato (float or None): Si se requiere un dato adicional como en la función percentile o arbitrario, este parametró será el umbral o el percentil
+        
+    Returns:
+        (list): Lista de diccionarios. Los diccionarios son los generados por la función diccionario_prediccion.
+    """
+    list_predict=[] #lista de diccionarios de prediccion
+    # YOUR CODE HERE
+    devolver=None
+    #seleccionamos las imagenes de acuerdo a la carpeta ingresada por parametro
+    if fold == "train":
+        imagenes = dict_train["images"]
+    elif fold == "valid":
+        imagenes = dict_val["images"]
+    elif fold == "test":
+        imagenes = dict_test["images"]
+    
+    for i in imagenes: #para cada imagen de la carpeta seleccionada
+        image_id = i["id"] #almacenamos el id de la imagen
+        im_name = i["file_name"] #almacenamos el nombre de la imagen
+        image_path = os.path.join('.','data_mp1','BCCD', fold, im_name) #obtenemos la ruta de la imagen
+        imagen = imread(image_path, as_gray=True) #leemos la imagen y la convertimos a escalada de grises
+        
+        #Se realiza la transformada segun se especifica por parámetro
+        if preproc == "gamma":
+            imagen_transformada = gamma_trans(imagen, gamma)
+            
+        elif preproc == "ecualizacion":
+            imagen_transformada = exposure.equalize_hist(imagen, nbins=256, mask=None)
+            
+        elif preproc == "especificacion":
+            url = str(image_objetivo)
+            descargar = requests.get(url)         
+            imagen_objetivo_pil = Image.open(BytesIO(descargar.content))
+            # Convertir las imágenes a escala de grises y luego a arreglos numpy
+            imagen_array = np.array(imagen_objetivo_pil.convert("L"))  # Imagen objetivo convertida a array
+            imagen_transformada = exposure.match_histograms(imagen, imagen_array)  # Aplicar especificación 
+               
+        dict_predict = diccionario_prediccion(imagen_transformada, image_id, segmentation_method, dato)
+        list_predict.append(dict_predict) #agregamos a la lista de predicciones
+        
+    return list_predict
+
+
+with open(os.path.join('data_mp1','BCCD','valid','_annotations.coco.json'),'rb') as g:
+    anots_val=json.load(g)
+
+
+mAP_max_gamma = [(0, 0, 0), (0, 0, 0)] #creamos un vector para almacenar los mejores mAP
+percentile_gamma = np.arange(3, 10.5, 0.5) #creamos una variable con diferentes porcentiles
+gamma = np.arange(0.1, 0.5, 0.1) #creamos una variable con diferentes gammas
+
+#observamos los mAP obtenidos para diferentes porcentiles y gammas
+for i in percentile_gamma:
+    for j in gamma:
+        list_val_prediccion_gamma = prediccion_total("valid","percentile","gamma",j,None,i)
+        Pr_gamma, Co_gamma, _, _= Curvas_P_C(anots_val,list_val_prediccion_gamma, 0.6)
+        mAP_value_gamma = mAP(Pr_gamma, Co_gamma)
+        
+    #almacenamos los dos mejores mAP
+    if mAP_value_gamma > mAP_max_gamma[0][0]:
+        mAP_max_gamma[1] = mAP_max_gamma[0]
+        mAP_max_gamma[0] = (mAP_value_gamma, i, j)
+        
+    elif mAP_value_gamma > mAP_max_gamma[1][0]:
+        mAP_max_gamma[1] = (mAP_value_gamma, i, j)
+            
+print(f"El mejor mAP es {mAP_max_gamma[0][0]} con el percentil de {mAP_max_gamma[0][1]} y gamma de {mAP_max_gamma[0][2]}")
+print(f"El segundo mejor mAP es {mAP_max_gamma[1][0]} con el percentil de {mAP_max_gamma[1][1]} y gamma de {mAP_max_gamma[1][2]}")
+
+
+#Hallamos el mAP para ecualización con diferentes porcentiles
+mAP_max_ecua= [(0, 0), (0, 0)] #creamos un vector para almacenar los mejores mAP
+percentile_ecua = np.arange(3, 10.5, 0.5) #creamos una variable con diferentes porcentiles
+
+#observamos los mAP para diferentes porcentiles
+for i in percentile_ecua:
+    list_val_prediccion_ecua = prediccion_total("valid", "percentile", "ecualizacion", None, None, i)
+    Pr_ecua, Co_ecua, _, _ = Curvas_P_C(anots, list_val_prediccion_ecua, 0.6)
+    mAP_value_ecua = mAP(Pr_ecua, Co_ecua) 
+    
+    #almacenamos los dos mejores mAP
+    if mAP_value_ecua > mAP_max_ecua[0][0]:
+        mAP_max_ecua[1] = mAP_max_ecua[0]
+        mAP_max_ecua[0] = (mAP_value_ecua, i)
+        
+    elif mAP_value_ecua > mAP_max_ecua[1][0]:
+        mAP_max_ecua[1] = (mAP_value_ecua, i)
+            
+print(f"El mejor mAP es {mAP_max_ecua[0][0]} con el percentil de {mAP_max_ecua[0][1]}")
+print(f"El segundo mejor mAP es {mAP_max_ecua[1][0]} con el percentil de {mAP_max_ecua[1][1]}")
+
+
+#Hallamos el mAP para especificación con diferentes porcentiles
+mAP_max_e= [(0, 0), (0, 0)] #creamos un vector para almacenar los mejores mAP
+percentile_e = np.arange(3, 10.5, 0.5) #creamos una variable con diferentes porcentiles
+
+#observamos los mAP para diferentes porcentiles
+for i in percentile_e:
+    list_val_prediccion_e = prediccion_total("valid", "percentile", "especificacion", None, "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQyM5MTczQVYkFeOfiknl6WGzH1RqXgiugiJw&s", i)
+    Pr_e, Co_e, _, _ = Curvas_P_C(anots_val, list_val_prediccion_e, 0.6)
+    mAP_value_e = mAP(Pr_e, Co_e) 
+    
+    #almacenamos los dos mejores mAP
+    if mAP_value_e > mAP_max_e[0][0]:
+        mAP_max_e[1] = mAP_max_e[0]
+        mAP_max_e[0] = (mAP_value_e, i)
+        
+    elif mAP_value_e > mAP_max_e[1][0]:
+        mAP_max_e[1] = (mAP_value_e, i)
+            
+print(f"El mejor mAP es {mAP_max_e[0][0]} con el percentil de {mAP_max_e[0][1]}")
+print(f"El segundo mejor mAP es {mAP_max_e[1][0]} con el percentil de {mAP_max_e[1][1]}")
+
+
+# Usen esta celda para importar funciones necesarias
+list_test_predict='' #lista de predicciones de test
+list_test_predict = prediccion_total("test", "percentile", "gamma", 4.6, None, 10)
+
+
+with open(os.path.join('data_mp1','BCCD','test','_annotations.coco.json'),'rb') as f:
+    anots=json.load(f)
+    
+Pr1,Co1,F1,umbral1=Curvas_P_C(anots,list_test_predict,0.6)
+mAP_04=mAP(Pr1,Co1)
+
+
+assert mAP_04>0.2, 'Su metodo no es mejor que el baseline'
+
+
+for num_im in range(4):  # Mostrar 4 imágenes
+    view_pred(num_im, "test", list_test_predict)
+
+
+with open(os.path.join('data_mp1','BCCD','test','_annotations.coco.json'),'rb') as f:
+    anots=json.load(f)
+    
+p=np.arange(0.0001,1.0001,0.0001)
+for f in np.arange(0.0,1.2,0.1): #saltos de 0.1 desde una F medida de 0 hasta una F medida de 1
+    aux=np.zeros(len(p))
+    for i in range(len(p)):
+        k=(2*p[i]-f)
+        if k>0.001:
+            c=f*p[i]/k
+            aux[i]=c
+    c=np.copy(aux)
+    c=c*(c<=1)
+    l2=np.where(c!=0)[0]
+    C=c[l2]
+    P=p[l2]
+    plt.plot(C,P,'r--')
+Pr1,Co1,F1,umbral1=Curvas_P_C(anots,list_val_predict,0.4)
+Pr2,Co2,F2,umbral2=Curvas_P_C(anots,list_val_predict,0.3)
+Pr3,Co3,F3,umbral3=Curvas_P_C(anots,list_val_predict,0.2)
+plt.plot(Co1,Pr1,label='J=0.4')
+plt.plot(Co2,Pr2,label='J=0.3')
+plt.plot(Co3,Pr3,label='J=0.2')
+plt.xlabel('Cobertura')
+plt.ylabel('Precision')
+plt.legend()
+plt.show()
+
+mAP_04=mAP(Pr1,Co1)
+mAP_03=mAP(Pr2,Co2)
+mAP_02=mAP(Pr3,Co3)
+
+print(f'J=0.4, mAP= {mAP_04}')
+print(f'J=0.3, mAP= {mAP_03}')
+print(f'J=0.2, mAP= {mAP_02}')
+
+
+import utils2
+converter('main_Salazar_Vidales_Acosta.ipynb')
+
+
+
+
+

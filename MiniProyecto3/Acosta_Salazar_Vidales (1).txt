@@ -1,0 +1,1729 @@
+# importar librerias
+import os
+import random
+import numpy as np
+import torch
+
+from glob import glob
+from tqdm import tqdm
+
+from matplotlib import pyplot as plt
+
+import cv2
+from skimage.feature import hog
+
+from sklearn.svm import SVC
+from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import f1_score
+from skimage.transform import resize
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from scipy.io import loadmat
+from scipy.signal import correlate2d
+from sklearn.cluster import KMeans
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import precision_recall_fscore_support
+
+
+group = 3 # Cambiar por el número de grupo
+# YOUR CODE HERE
+
+
+
+def determine_classes(group: int) -> list:
+    """Función que determina las clases a utilizar en el proyecto.
+
+    Args:
+        group (int): Número de grupo.
+
+    Returns:
+        list: Lista con los nombres de las clases a utilizar.
+    """
+    random.seed(group)
+    categories = glob(os.path.join("dataset", "train", "*"))
+    stats = [(os.path.basename(category), len(os.listdir(category))) for category in categories]
+    clusters = {}
+    for category, num_images in stats:
+        if num_images in clusters:
+            clusters[num_images].append(category)
+        else:
+            clusters[num_images] = [category]
+    categories = []
+    for cluster_categories in clusters.values():
+        categories += [random.choice(cluster_categories)]
+    return categories
+
+assert group is not None, "Por favor, asigna un número de grupo a la variable 'group'."
+assert group > 0, "El número de grupo debe ser mayor que 0."
+assert group <= 28, "El número de grupo debe ser menor o igual que 28."
+
+categories = determine_classes(group)
+print(f"Las classes que usarán en este Mini-proyecto serán:\n{", ".join(categories)}.")
+
+
+def determine_classes(group: int) -> list:
+    """Función que determina las clases a utilizar en el proyecto.
+
+    Args:
+        group (int): Número de grupo.
+
+    Returns:
+        list: Lista con los nombres de las clases a utilizar.
+    """
+    random.seed(group)
+    categories = glob(os.path.join("dataset", "train", "*"))
+    stats = [(os.path.basename(category), len(os.listdir(category))) for category in categories]
+    clusters = {}
+    for category, num_images in stats:
+        if num_images in clusters:
+            clusters[num_images].append(category)
+        else:
+            clusters[num_images] = [category]
+    categories = []
+    for cluster_categories in clusters.values():
+        categories += [random.choice(cluster_categories)]
+    return categories
+
+assert group is not None, "Por favor, asigna un número de grupo a la variable 'group'."
+assert group > 0, "El número de grupo debe ser mayor que 0."
+assert group <= 28, "El número de grupo debe ser menor o igual que 28."
+
+categories = determine_classes(group)
+print(f"Las classes que usarán en este Mini-proyecto serán:\n{', '.join(categories)}.")
+
+
+class_names = sorted([
+    "Sciurus carolinensis",
+    "Phoca vitulina",
+    "Otospermophilus variegatus",
+    "Tamias striatus",
+    "Canis latrans"
+])
+
+dict_labels = {name: idx for idx, name in enumerate(class_names)}
+print(dict_labels) # Cambiar por un diccionario con las etiquetas de las clases
+
+# YOUR CODE HERE
+def get_data(subset: str) -> tuple[list[str], list[int]]:
+  """Función que obtiene las rutas de las imágenes y sus etiquetas.
+
+  Args:
+      subset (str): Nombre del subconjunto de datos a utilizar.
+
+  Returns:
+      tuple[list, list]: Rutas de las imágenes y sus etiquetas.
+  """
+  base_dir = os.path.join("dataset", subset)
+  paths = [] # Cambiar por una lista con las rutas de las imágenes
+  labels = [] # Cambiar por una lista con las etiquetas de las imágenes
+
+  # YOUR CODE HERE
+  for class_name in class_names:
+        class_dir = os.path.join(base_dir, class_name)
+        if not os.path.exists(class_dir):
+            continue
+
+        # Encontrar todos los .jpg o .png
+        image_files = glob(os.path.join(class_dir, "*.*"))
+        for image_path in image_files:
+            paths.append(image_path)
+            labels.append(dict_labels[class_name])
+
+  return paths, labels
+
+train_paths, train_labels = get_data("train")
+valid_paths, valid_labels = get_data("valid")
+test_paths, test_labels = get_data("test")
+
+
+assert len(train_paths) > 0, "No se ha cargado ningún dato de entrenamiento"
+assert len(train_paths) == 5163, "El número de datos de entrenamiento no es correcto"
+assert len(valid_paths) > 0, "No se ha cargado ningún dato de validación"
+assert len(valid_paths) == 1723, "El número de datos de validación no es correcto"
+assert len(test_paths) > 0, "No se ha cargado ningún dato de test"
+assert len(test_paths) == 1724, "El número de datos de test no es correcto"
+
+assert type(train_paths[0]) == str, "Los datos de entrenamiento no tienen la forma correcta"
+assert type(valid_paths[0]) == str, "Los datos de validación no tienen la forma correcta"
+assert type(test_paths[0]) == str, "Los datos de test no tienen la forma correcta"
+
+assert type(train_labels[0]) == int, "Las etiquetas de entrenamiento no tienen la forma correcta"
+assert type(valid_labels[0]) == int, "Las etiquetas de validación no tienen la forma correcta"
+assert type(test_labels[0]) == int, "Las etiquetas de test no tienen la forma correcta"
+
+assert len(dict_labels) == len(categories), "El diccionario de labels no tiene la longitud correcta"
+
+categories_sorted = sorted(categories)
+assert list(dict_labels.keys()) == categories_sorted, "Las llaves del diccionario de labels no son correctas"
+assert list(dict_labels.values()) == list(range(len(categories))), "Los valores del diccionario de labels no son correctos"
+
+assert min([dict_labels[train_paths[i].split(os.sep)[-2]] == train_labels[i] for i in range(len(train_paths))]), "Las etiquetas de entrenamiento no coinciden"
+assert min([dict_labels[valid_paths[i].split(os.sep)[-2]] == valid_labels[i] for i in range(len(valid_paths))]), "Las etiquetas de validación no coinciden"
+assert min([dict_labels[test_paths[i].split(os.sep)[-2]] == test_labels[i] for i in range(len(test_paths))]), "Las etiquetas de test no coinciden"
+
+
+def processing(Im: np.ndarray, img_size: tuple[int] | None = None, color_space: str | None = None) -> np.ndarray:
+    """Función que preprocesa una lista de imágenes.
+
+    Args:
+        Im_list (list[np.ndarray]): Lista con las imágenes a preprocesar.
+        img_size (tuple[int] | None): Tamaño de la imagen.
+        color_space (str | None): Espacio de color a utilizar. Puede ser "rgb", "gray", "hsv" o "lab".
+
+    Returns:
+        list[np.ndarray]: Lista con las imágenes preprocesadas.
+    """
+
+    # YOUR CODE HERE
+    if img_size is not None:
+        Im = cv2.resize(Im, img_size)
+
+    # Convertir al espacio de color
+    if color_space is not None:
+        if color_space == "rgb":
+            if Im.ndim == 3:  # evadir convertir a escala de grises a RGB
+                Im = cv2.cvtColor(Im, cv2.COLOR_BGR2RGB)
+        elif color_space == "gray":
+            if Im.ndim == 3:  # solo convertir a escala de grises
+                Im = cv2.cvtColor(Im, cv2.COLOR_BGR2GRAY)
+        elif color_space == "hsv":
+            Im = cv2.cvtColor(Im, cv2.COLOR_BGR2HSV)
+        elif color_space == "lab":
+            Im = cv2.cvtColor(Im, cv2.COLOR_BGR2LAB)
+        else:
+            raise ValueError(f"Espacio de Color no disponible: {color_space}")
+
+    return Im
+
+
+Im_list = [cv2.imread(path) for path in train_paths[:5]]
+img_size = (224, 224)
+color_space = "rgb"
+Im_proc = [processing(Im, img_size, color_space) for Im in Im_list]
+
+assert len(Im_proc) == len(Im_list), "El número de imágenes preprocesadas no es correcto"
+assert type(Im_proc) == list, "Las imágenes preprocesadas no están en una lista"
+assert type(Im_proc[0]) == np.ndarray, "Las imágenes preprocesadas no son arreglos de numpy"
+assert np.array(Im_proc).shape[1:] == (224, 224, 3), "Las imágenes preprocesadas no tienen el tamaño correcto"
+assert np.array_equal(cv2.cvtColor(cv2.resize(Im_list[0], (224, 224)), cv2.COLOR_BGR2RGB), Im_proc[0]), "Las imágenes preprocesadas no son correctas"
+
+color_space = "gray"
+Im_proc = [processing(Im, img_size, color_space) for Im in Im_list]
+assert np.array(Im_proc).shape[1:] == (224, 224), "Las imágenes preprocesadas no tienen el tamaño correcto"
+assert np.array_equal(cv2.cvtColor(cv2.resize(Im_list[0], (224, 224)), cv2.COLOR_BGR2GRAY), Im_proc[0]), "Las imágenes preprocesadas no son correctas"
+
+color_space = "hsv"
+Im_proc = [processing(Im, img_size, color_space) for Im in Im_list]
+assert np.array(Im_proc).shape[1:] == (224, 224, 3), "Las imágenes preprocesadas no tienen el tamaño correcto"
+assert np.array_equal(cv2.cvtColor(cv2.resize(Im_list[0], (224, 224)), cv2.COLOR_BGR2HSV), Im_proc[0]), "Las imágenes preprocesadas no son correctas"
+
+color_space = "lab"
+Im_proc = [processing(Im, img_size, color_space) for Im in Im_list]
+assert np.array(Im_proc).shape[1:] == (224, 224, 3), "Las imágenes preprocesadas no tienen el tamaño correcto"
+assert np.array_equal(cv2.cvtColor(cv2.resize(Im_list[0], (224, 224)), cv2.COLOR_BGR2LAB), Im_proc[0]), "Las imágenes preprocesadas no son correctas"
+
+Im_proc = [processing(Im, (256, 256)) for Im in Im_list]
+assert np.array(Im_proc).shape[1:] == (256, 256, 3), "Las imágenes preprocesadas no tienen el tamaño correcto"
+assert np.array_equal(cv2.resize(Im_list[0], (256, 256)), Im_proc[0]), "Las imágenes preprocesadas no son correctas"
+
+Im_proc = [processing(Im, None, "lab") for Im in Im_list]
+assert np.array_equal(cv2.cvtColor(Im_list[0], cv2.COLOR_BGR2LAB), Im_proc[0]), "Las imágenes preprocesadas no son correctas"
+
+
+import cupy as cp
+
+#USAR CUPY/CODA EN ESTA FUNCION
+
+def color_hist(Im: np.ndarray, type_h: str, bins: int) -> np.ndarray:
+    """Optimized version using CuPy for GPU histogram computation."""
+    Im_gpu = cp.asarray(Im)  # enviar a GPU
+
+    if type_h == "concat":
+        hists = []
+        for c in range(Im_gpu.shape[2]):
+            ch_data = Im_gpu[:, :, c].ravel()
+            hist = cp.histogram(ch_data, bins=bins, range=(0, 256))[0]
+            hists.append(hist)
+        h = cp.concatenate(hists)
+    elif type_h == "joint":
+        intensities = Im_gpu.reshape(-1, 3)
+        h = cp.histogramdd(intensities, bins=(bins, bins, bins),
+                           range=((0, 256), (0, 256), (0, 256)))[0].ravel()
+    else:
+        raise ValueError("type_h must be 'concat' or 'joint'")
+
+    h = h / h.sum()  # Normalizar
+    return cp.asnumpy(h)  # retornar
+
+
+def Color_pyramid(Im: np.ndarray, patch_sizes: list[tuple[int]], type_h: str, bins: int) -> np.ndarray:
+    final_histogram = []
+    for patch_h, patch_w in patch_sizes:
+        num_rows = Im.shape[0] // patch_h
+        num_cols = Im.shape[1] // patch_w
+        for i in range(num_rows):
+            for j in range(num_cols):
+                patch = Im[i * patch_h:(i + 1) * patch_h, j * patch_w:(j + 1) * patch_w]
+                patch_hist = color_hist(patch, type_h, bins)
+                final_histogram.append(patch_hist)
+    return np.concatenate(final_histogram)
+
+
+img=processing(cv2.imread(os.path.join(".", "dataset", "train", "Canis latrans", "f494fab00ebb2d87c8d3bf5215560d54.jpg")),  (256, 256), 'rgb')
+h_pyramid_cat=Color_pyramid(img,[(256, 256), (128, 128), (64, 64)],'concat',10)
+h_pyramid_joint=Color_pyramid(img,[(256, 256), (128, 128), (64, 64)],'joint',5)
+
+fig,ax=plt.subplots(2,2,figsize=(10,10))
+ax[0,0].imshow(img)
+ax[0,0].axis('off')
+ax[0,0].set_title('Imagen')
+ax[0,1].hist(list(range(len(h_pyramid_cat))), list(range(len(h_pyramid_cat - 1))), weights = h_pyramid_cat)
+ax[0,1].set_title('Histograma de piramide')
+
+assert len(h_pyramid_cat)==30*(1+4+16), 'La longitud del descriptor final debe ser igual a la longitud del histograma concatenado multiplicado por la cantidad de cuadrantes dentro de la imagen'
+assert np.isclose(np.sum(h_pyramid_cat),(1+4+16),0.01), 'En total se tienen 64 histogramas normalizados juntos, la suma de todo debe ser 64'
+assert len(h_pyramid_joint)==5**3*(1+4+16), 'La longitud del descriptor final debe ser igual a la longitud del histograma conjunto multiplicado por la cantidad de cuadrantes dentro de la imagen'
+assert np.isclose(np.sum(h_pyramid_joint),(1+4+16),0.01), 'En total se tienen 64 histogramas normalizados juntos, la suma de todo debe ser 64'
+a=color_hist(img[64:64+64,64:64+64,:],'concat',10)
+K=10
+b=h_pyramid_cat[K*30:K*30+30]
+
+ax[1,0].imshow(img[64:64+64,64:64+64,:])
+ax[1,0].axis('off')
+ax[1,0].set_title('Recorte')
+ax[1,1].hist(list(range(len(h_pyramid_cat[K*30:K*30+30]))), list(range(len(h_pyramid_cat[K*30:K*30+30] - 1))), weights = h_pyramid_cat[K*30:K*30+30])
+ax[1,1].set_title('Histograma de recorte')
+
+assert np.array_equal(a,b), 'El histograma concatenado de el cuadrante 17 de la imagen debe ser igual la parte 17 del histograma en piramide'
+
+
+from tqdm import tqdm
+from skimage.feature import hog
+from skimage.transform import resize
+import cv2
+import numpy as np
+# === Parámetros ===
+resize_shape = (256, 256)
+patch_sizes = [(256, 256), (128, 128), (64, 64)]
+bins = 8
+hog_params = dict(
+    orientations=9,
+    pixels_per_cell=(8, 8),
+    cells_per_block=(2, 2),
+    visualize=False,
+    channel_axis=-1
+)
+
+# === Inicializar listas ===
+shape_des_train = []
+color_des_train = []
+shape_des_valid = []
+color_des_valid = []
+train_images_num = len(train_paths)
+# === EXTRACCIÓN DE DESCRIPTORES: ENTRENAMIENTO ===
+print("Extrayendo descriptores de entrenamiento...")
+for img_path in tqdm(train_paths, desc="Train"):
+    img = cv2.imread(img_path)
+    img_rgb = processing(img, resize_shape, "rgb")
+
+    # CuPy con Color Pyramid descriptor
+    color_des_train.append(Color_pyramid(img_rgb, patch_sizes, "concat", bins))
+
+    # HOG descriptor 
+    resized_hog = resize(img_rgb, (128, 64))
+    shape_des_train.append(hog(resized_hog, **hog_params))
+
+# === EXTRACCIÓN DE DESCRIPTORES: VALIDACIÓN ===
+print("Extrayendo descriptores de validación...")
+for img_path in tqdm(valid_paths, desc="Validation"):
+    img = cv2.imread(img_path)
+    img_rgb = processing(img, resize_shape, "rgb")
+
+    color_des_valid.append(Color_pyramid(img_rgb, patch_sizes, "concat", bins))
+
+    resized_hog = resize(img_rgb, (128, 64))
+    shape_des_valid.append(hog(resized_hog, **hog_params))
+
+
+
+assert len(train_labels) == train_images_num, 'La cantidad de etiquetas que tiene debe ser igual a la cantidad de imagenes que usted especificó'
+assert len(shape_des_train) == len(color_des_train) and len(shape_des_valid) == len(color_des_valid), 'Usted debe tener la misma cantidad de descriptores en todas las listas'
+assert len(shape_des_train[0]) > 1, 'El descriptor debe tener más de una dimensión'
+assert len(color_des_train[0]) > 1, 'El descriptor debe tener más de una dimensión'
+assert len(color_des_train[0]) <= 7056, 'Su descriptor unimodal de color tiene demasiadas dimensiones'
+assert len(shape_des_train[0]) <= 7056, 'Su descriptor unimodal de forma tiene demasiadas dimensiones'
+assert len(np.unique(train_labels)) == 5, 'Solo deben haber 5 etiquetas'
+assert len(np.unique(valid_labels)) == 5, 'Solo deben haber 5 etiquetas'
+
+assert len(valid_labels) == 1723, 'Usted debe sacar el descriptor de todas las imagenes de validación'
+assert len(color_des_train[0]) == len(color_des_valid[0]), 'El descriptor en train y valid debe ser igual'
+assert len(shape_des_train[0]) == len(shape_des_valid[0]), 'El descriptor en train y valid debe ser igual'
+
+print(f"Las dimensiones de su descriptor de color son {np.array(color_des_train).shape[1]}")
+print(f"Las dimensiones de su descriptor de forma son {np.array(shape_des_train).shape[1]}")
+
+
+svm_color='' #modelo SVM entrenado con color
+svm_shape='' #modelo SVM entrenado con forma
+
+# YOUR CODE HERE
+#  Modelo SVM entrenado con color
+svm_color = make_pipeline(
+    StandardScaler(),
+    SVC(probability=True, random_state=42)
+)
+svm_color.fit(color_des_train, train_labels)
+
+# Modelo SVM entrenado con forma
+svm_shape = make_pipeline(
+    StandardScaler(),
+    SVC(probability=True, random_state=42)
+)
+svm_shape.fit(shape_des_train, train_labels)
+
+
+proba_color_valid=[] #lista de probabilidades de todas las imagenes de validación en color 
+proba_shape_valid=[] #lista de probabilidades de todas las imagenes de validación en forma
+
+# YOUR CODE HERE
+proba_color_valid=svm_color.predict_proba(color_des_valid) #lista de probabilidades de todas las imagenes de validación en color
+proba_shape_valid=svm_shape.predict_proba(shape_des_valid) #lista de probabilidades de todas las imagenes de validación en forma
+
+
+assert len(proba_color_valid)==1723, 'Debería tener 1723 datos de predicción'
+assert len(proba_shape_valid)==1723, 'Debería tener 1723 datos de predicción'
+assert np.isclose(np.mean(np.sum(proba_color_valid,axis=1)),1), 'La suma de las probabilidades debe ser 1'
+assert svm_color.n_features_in_==len(color_des_train[0]), 'Usted entrenó el modelo de color con un descriptor diferente al de color'
+assert svm_shape.n_features_in_==len(shape_des_train[0]), 'Usted entrenó el modelo de forma con un descriptor diferente al de forma'
+assert not np.array_equal(proba_color_valid,proba_shape_valid), 'Sus probabilidades no son diferentes'
+assert np.array_equal(proba_color_valid[0],svm_color.predict_proba([color_des_valid[0]])[0]), 'Las probabilidades de color estan mal calculadas'
+
+
+final_predict=[] #predicción final por expertos
+color_predict=[] #predicción final por color
+shape_predict=[] #predicción final por forma
+# YOUR CODE HERE
+
+color_predict = np.argmax(proba_color_valid, axis=1)
+shape_predict = np.argmax(proba_shape_valid, axis=1)
+
+# Promedio de las probabilidades
+average_proba = (proba_color_valid + proba_shape_valid) / 2
+
+# Predicción final basada en el promedio de probabilidades
+final_predict = np.argmax(average_proba, axis=1)
+
+
+color_p=proba_color_valid[0]
+shape_p=proba_shape_valid[0]
+
+assert np.isclose(((color_p+shape_p)/2)[final_predict[0]],np.max(((color_p+shape_p)/2))), 'La probabilidad maxima no fue seleccionada como la etiqueta de predicción final'
+
+
+f_color=f1_score(valid_labels,color_predict,average='macro')
+f_shape=f1_score(valid_labels,shape_predict,average='macro')
+f_final=f1_score(valid_labels,final_predict,average='macro')
+
+print(f'color: {f_color}')
+print(f'forma: {f_shape}')
+print(f'final: {f_final}')
+
+
+assert f_color<0.8, 'Usted esta validando con los mismos datos que entrenó'
+assert f_shape<0.8, 'Usted esta validando con los mismos datos que entrenó'
+assert f_final<0.8, 'Usted esta validando con los mismos datos que entrenó'
+
+
+from sklearn.metrics import precision_score, recall_score
+
+precision_color= precision_score(valid_labels, color_predict, average='macro')
+recall_color = recall_score(valid_labels, color_predict, average='macro')
+
+print('Color')
+print(f'Precisión: {precision_color}')
+print(f'Cobertura: {recall_color}')
+
+
+precision_shape= precision_score(valid_labels,shape_predict, average='macro')
+recall_shape = recall_score(valid_labels,shape_predict, average='macro')
+
+print('Forma')
+print(f'Precisión: {precision_shape}')
+print(f'Cobertura: {recall_shape}')
+
+
+precision_final = precision_score(valid_labels,final_predict, average='macro')
+recall_final = recall_score(valid_labels,final_predict, average='macro')
+
+print('Final')
+print(f'Precisión: {precision_final}')
+print(f'Cobertura: {recall_final}')
+
+
+RF_color='' #modelo RF entrenado con color
+RF_shape='' #modelo RF entrenado con forma
+
+MLP_color='' #modelo MLP entrenado con color
+MLP_shape='' #modelo MLP entrenado con forma
+
+# YOUR CODE HERE
+
+# Modelos de Random Forest
+RF_color = RandomForestClassifier(n_estimators=100, random_state=30)
+RF_color.fit(color_des_train, train_labels)
+
+RF_shape = RandomForestClassifier(n_estimators=100, random_state=30)
+RF_shape.fit(shape_des_train, train_labels)
+
+# Modelos de MLP
+MLP_color = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=30)#modelo MLP entrenado con color
+MLP_color.fit(color_des_train, train_labels)
+
+MLP_shape = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=30)#modelo MLP entrenado con forma
+MLP_shape.fit(shape_des_train, train_labels)
+
+
+proba_color_valid_RF='' #lista de probabilidades de color en validación Random Forest
+proba_shape_valid_RF='' #lista de probabilidades de forma en validación Random Forest
+
+proba_color_valid_MLP='' #lista de probabilidades de color en validación MLP
+proba_shape_valid_MLP='' #lista de probabilidades de forma en validación MLP
+
+# YOUR CODE HERE
+proba_color_valid_RF = RF_color.predict_proba(color_des_valid)
+proba_shape_valid_RF = RF_shape.predict_proba(shape_des_valid)
+
+proba_color_valid_MLP = MLP_color.predict_proba(color_des_valid)
+proba_shape_valid_MLP = MLP_shape.predict_proba(shape_des_valid)
+
+
+assert len(proba_color_valid_RF)==1723, 'Debería tener 500 datos de predicción'
+assert len(proba_shape_valid_RF)==1723, 'Debería tener 500 datos de predicción'
+assert len(proba_color_valid_MLP)==1723, 'Debería tener 500 datos de predicción'
+assert len(proba_shape_valid_MLP)==1723, 'Debería tener 500 datos de predicción'
+assert np.isclose(np.mean(np.sum(proba_color_valid_RF,axis=1)),1), 'La suma de las probabilidades debe ser 1'
+assert np.isclose(np.mean(np.sum(proba_color_valid_MLP,axis=1)),1), 'La suma de las probabilidades debe ser 1'
+assert RF_color.n_features_in_==len(color_des_train[0]), 'Usted entrenó el modelo de color con un descriptor diferente al de color'
+assert MLP_shape.n_features_in_==len(shape_des_train[0]), 'Usted entrenó el modelo de forma con un descriptor diferente al de forma'
+assert not np.array_equal(proba_color_valid_RF,proba_shape_valid_RF), 'Sus probabilidades no son diferentes'
+assert not np.array_equal(proba_color_valid_MLP,proba_shape_valid_MLP), 'Sus probabilidades no son diferentes'
+assert np.array_equal(proba_color_valid_RF[0],RF_color.predict_proba([color_des_valid[0]])[0]), 'Las probabilidades de color estan mal calculadas'
+assert np.mean(proba_color_valid_MLP[0]-MLP_color.predict_proba([color_des_valid[0]])[0])<0.01, 'Las probabilidades de color estan mal calculadas'
+
+
+color_predict_RF='' #prediccion del modelo random forest de color
+color_predict_MLP='' #prediccion del modelo MLP de color
+shape_predict_RF='' #prediccion del modelo random forest de forma
+shape_predict_MLP='' #prediccion del modelo MLP de forma
+
+experto_MLP_predict='' #modelo experto de MLP unicamente
+experto_RF_predict='' #modelo experto de RF unicamente
+# YOUR CODE HERE
+
+
+# Paramétros
+rf_models = [RF_color, RF_shape]
+mlp_models = [MLP_color, MLP_shape]
+rf_inputs = [color_des_valid, shape_des_valid]
+mlp_inputs = [color_des_valid, shape_des_valid]
+
+# Predicción de probabilidades para RF y MLP
+proba_color_valid_RF, proba_shape_valid_RF = [model.predict_proba(data) for model, data in zip(rf_models, rf_inputs)]
+proba_color_valid_MLP, proba_shape_valid_MLP = [model.predict_proba(data) for model, data in zip(mlp_models, mlp_inputs)]
+
+# Predicciones
+color_predict_RF, shape_predict_RF = [model.predict(data) for model, data in zip(rf_models, rf_inputs)]
+color_predict_MLP, shape_predict_MLP = [model.predict(data) for model, data in zip(mlp_models, mlp_inputs)]
+
+# Modelos expertos
+avg_proba_RF = (proba_color_valid_RF + proba_shape_valid_RF) / 2
+avg_proba_MLP = (proba_color_valid_MLP + proba_shape_valid_MLP) / 2
+
+experto_RF_predict = np.argmax(avg_proba_RF, axis=1)
+experto_MLP_predict = np.argmax(avg_proba_MLP, axis=1)
+
+
+
+color_p=proba_color_valid_RF[0]
+shape_p=proba_shape_valid_RF[0]
+
+assert np.isclose(((color_p+shape_p)/2)[experto_RF_predict[0]],np.max(((color_p+shape_p)/2))), 'La probabilidad maxima no fue seleccionada como la etiqueta de predicción final'
+
+color_p=proba_color_valid_MLP[0]
+shape_p=proba_shape_valid_MLP[0]
+
+assert np.isclose(((color_p+shape_p)/2)[experto_MLP_predict[0]],np.max(((color_p+shape_p)/2))), 'La probabilidad maxima no fue seleccionada como la etiqueta de predicción final'
+
+
+f_color_RF=f1_score(valid_labels,color_predict_RF,average='macro')
+f_shape_RF=f1_score(valid_labels,shape_predict_RF,average='macro')
+f_experto_RF=f1_score(valid_labels,experto_RF_predict,average='macro')
+
+f_color_MLP=f1_score(valid_labels,color_predict_MLP,average='macro')
+f_shape_MLP=f1_score(valid_labels,shape_predict_MLP,average='macro')
+f_experto_MLP=f1_score(valid_labels,experto_MLP_predict,average='macro')
+
+print('Random Forest')
+print(f'color: {f_color_RF}')
+print(f'forma: {f_shape_RF}')
+print(f'final: {f_experto_RF}')
+print('MLP')
+print(f'color: {f_color_MLP}')
+print(f'forma: {f_shape_MLP}')
+print(f'final: {f_experto_MLP}')
+
+
+f_experto_final= f_experto_RF #f medida de el modelo de expertos final
+# YOUR CODE HERE
+
+
+
+assert f_experto_final > 0.55, 'Su f medida final no es la esperada'
+
+
+# Cargamos el baseline obtenido antes
+
+train_multimodal_desc = "" #Descriptor multimodal de entrenamiento
+val_multimodal_desc = "" #Descriptor multimodal de validación
+svm_multimodal_desc = "" #Modelo SVM entrenado con descriptor multimodal
+predict_svm_multimodal_desc = "" #Predicción de modelo SVM entrenado con descriptor multimodal
+f_multimodal_desc = "" #F medida de modelo SVM entrenado con descriptor multimodal
+
+# YOUR CODE HERE
+
+#Concatenar cada descriptor de imágen
+train_multimodal_desc = [np.concatenate([color, hog]) for color, hog in zip(color_des_train, shape_des_train)]
+val_multimodal_desc = [np.concatenate([color, hog]) for color, hog in zip(color_des_valid, shape_des_valid)]
+
+# Entrenar el modelo SVM en un descriptor multimodal
+svm_multimodal_desc = SVC(kernel='rbf', C=10.0)
+svm_multimodal_desc.fit(train_multimodal_desc, train_labels)
+
+# Predecir en el set de validación
+predict_svm_multimodal_desc = svm_multimodal_desc.predict(val_multimodal_desc)
+
+# Calcular la F medida
+_, _, f_multimodal_desc, _ = precision_recall_fscore_support(
+    valid_labels, predict_svm_multimodal_desc, average='macro'
+)
+print(f"El valor de la F medida de su modelo multimodal es {f_multimodal_desc}")
+
+baseline = f_multimodal_desc
+
+
+#Experimentación
+
+# YOUR CODE HERE
+#Descriptor de textura
+
+filterbank='' #arreglo de filtros
+
+#Se carga la funcion filterbank.mat
+mat_data = loadmat("filterbank.mat")
+
+#Añadir la llave "filterbank"
+filterbank = mat_data["filterbank"]
+
+from scipy.signal import correlate2d
+
+def filter_map(Im: np.ndarray, filterbank: np.ndarray) -> torch.tensor:
+    """Funcion que aplica un banco de filtros a una imagen
+
+    Args:
+        Im (numpy.ndarray): Imagen de entrada RGB
+
+    Returns:
+        numpy.ndarray: Resultado de aplicar el banco de filtros a la imagen
+    """
+    if len(Im.shape) == 3:
+        Im = cv2.cvtColor(Im, cv2.COLOR_BGR2GRAY)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = torch.float32
+
+    Im = torch.tensor(Im, dtype=dtype, device=device)
+    Im = Im[None, None]
+    filterbank = torch.tensor(filterbank, dtype=dtype, device=device)
+    filterbank = filterbank.permute(2, 0, 1)[:, None]
+    convolution = torch.nn.functional.conv2d(Im, filterbank, padding="same")
+    convolution = convolution.permute(0, 2, 3, 1)
+    new_im = convolution.to("cpu").numpy()[0]
+
+    return new_im
+
+def pixel_dataset(Im_list: list[np.ndarray], filterbank: np.ndarray) -> list[np.ndarray]:
+    """Funcion que aplica un banco de filtros a una lista de imagenes y retorna un arreglo con los pixeles de las imagenes filtradas
+
+    Args:
+        Im_list (list[numpy.ndarray]): Lista de imágenes de entrada RGB
+        filterbank (numpy.ndarray): Banco de filtros
+
+    Returns:
+        list[numpy.ndarray]: Lista con los pixeles de las imagenes filtradas
+    """
+    pixels = [] #Lista con los pixeles de las imagenes filtradas
+    # YOUR CODE HERE
+    target_size = (256, 256)
+
+    for img in Im_list:
+        #Convertir la imagen a escala de grises
+        img = processing(img, target_size, color_space="gray")
+
+        #Se obtiene el mapa de respuesta por medio del filterbank y empleando la funcion filter_map (H x W x N)
+        response_map = filter_map(img, filterbank)
+
+        #Se extrae los pixeles del mapa de respuesta, es decir, (H*W, N)
+        pixel_vectors = response_map.reshape(-1, response_map.shape[2])
+
+        #Se añade los pixeles a la lista pixels
+        pixels.extend(pixel_vectors)
+    return pixels
+
+def texture_map(Im: np.ndarray, filterbank: np.ndarray, texton_dict: KMeans) -> np.ndarray:
+    """Funcion que mapea una imagen a textones
+
+    Args:
+        Im (numpy.ndarray): Imagen de entrada RGB
+        filterbank (numpy.ndarray): Banco de filtros
+        texton_dict (KMeans): Diccionario de textones
+
+    Returns:
+        numpy.ndarray: Imagen mapeada a textones
+    """
+    texture_im = '' # Imagen mapeada a textones
+    # YOUR CODE HERE
+    target_size = (256, 256)
+
+    #Convertir la imagen a escala de grises
+    Im = processing(Im, target_size, color_space="gray")
+
+    #Se obtiene el mapa de respuesta por medio del filterbank y empleando la funcion filter_map (H x W x N)
+    response_map = filter_map(Im, filterbank)
+
+    H, W, N = response_map.shape
+
+    #Se aplana a (H*W, N)
+    pixels = response_map.reshape(-1, N)
+
+    #Predecir el label del cluster
+    labels = texton_dict.predict(pixels)
+
+    #Transformar la imagen de 2 dimensiones
+    texture_im = labels.reshape(H, W)
+    return texture_im
+
+
+Pixels=pixel_dataset(Im_list,filterbank)
+
+textones = 25 #cantidad de textones k
+model1='' #modelo K means entrenado
+# YOUR CODE HERE
+pixels_array = np.array(Pixels)
+
+#Se fija la semilla con un numero aleatorio, 30 en este caso, para obtener los mimsmos resultados de clustering
+# y se hace 10 iteraciones
+
+# Entrenamos con Kmeans
+model1 = KMeans(n_clusters=textones, random_state=30, n_init=10)
+model1.fit(pixels_array)
+
+def texture_histogram(Im: np.ndarray, filterbank: np.ndarray, texton_dict: KMeans, bins: int) -> np.ndarray:
+    """Funcion que calcula el histograma de textones de una imagen
+
+    Args:
+        Im (numpy.ndarray): Imagen de entrada RGB
+        filterbank (numpy.ndarray): Banco de filtros
+        texton_dict (KMeans): Diccionario de textones
+        bins (int): Número de bins del histograma
+
+    Returns:
+        numpy.ndarray: Histograma de textones normalizado
+    """
+    histogram = "" # Histograma de textones normalizado
+    # YOUR CODE HERE
+    #Se emplea la funcion texture_map para obtener el mapa de texturas
+    texture_map_img = texture_map(Im, filterbank, texton_dict)
+
+    #se aplana para obtener el histograma
+    hist, _ = np.histogram(texture_map_img.flatten(), bins=bins, range=(0, bins))
+
+    #Se normaliza el histrograma y retorna este histograma
+    histogram = hist.astype(np.float32) / np.sum(hist)
+
+    return histogram
+
+
+#Borrar antes de la experimentación
+del shape_des_train 
+del color_des_train 
+del shape_des_valid 
+del color_des_valid 
+del svm_color
+del svm_shape
+del proba_color_valid 
+del proba_shape_valid
+del RF_color
+del RF_shape
+del MLP_color
+del MLP_shape
+del final_predict
+del color_predict
+del shape_predict
+del proba_color_valid_RF
+del proba_shape_valid_RF
+del proba_color_valid_MLP
+del proba_shape_valid_MLP
+
+
+# Listas para almacenar la información
+shape_des_train = []
+color_des_train = []
+textura_des_train = []
+textura_labels_train = []
+
+shape_des_valid = []
+color_des_valid = []
+textura_des_valid = []
+textura_labels_valid = []
+
+# Parametros
+resize_shape = (256, 256)
+patch_sizes = [(256, 256), (128, 128), (64, 64)]
+bins = 50 # Pasamos de 8 a 50 bins
+textones = 25 # Determinamos un alto número de textones
+hog_params = dict(
+    orientations=10,
+    pixels_per_cell=(8, 8),
+    cells_per_block=(2, 2),
+    visualize=False,
+    channel_axis=-1
+)
+
+
+# Extraer descriptores de entrenamiento
+print("Extrayendo descriptores de entrenamiento...")
+for img_path in tqdm(train_paths, desc="Train"):
+    img = cv2.imread(img_path)
+    img_rgb = processing(img, resize_shape, "rgb")
+    img_gray = processing(img, resize_shape,"gray")
+    
+    # Color descriptor
+    color_des_train.append(Color_pyramid(img_rgb, patch_sizes, "concat", bins))
+
+    # HOG descriptor 
+    resized_hog = resize(img_rgb, (128, 64))
+    shape_des_train.append(hog(resized_hog, **hog_params))
+
+selected_train = list(zip(train_paths, train_labels))
+
+for img_path, label in tqdm(selected_train):
+    img = cv2.imread(img_path)
+    img_gray = processing(img, resize_shape,"gray")
+  
+    # Textura descriptor
+    hist = texture_histogram(img_gray, filterbank, model1, bins=textones)
+    textura_des_train.append(hist)
+    textura_labels_train.append(label)
+
+
+# Extraer descriptores de validación
+print("Extrayendo descriptores de validación...")
+for img_path in tqdm(valid_paths, desc="Validation"):
+    img = cv2.imread(img_path)
+    img_rgb = processing(img, resize_shape, "rgb")
+    img_gray = processing(img, resize_shape,"gray")
+    
+    # Color descriptor
+    color_des_valid.append(Color_pyramid(img_rgb, patch_sizes, "concat", bins))
+
+    # HOG descriptor 
+    resized_hog = resize(img_rgb, (128, 64))
+    shape_des_valid.append(hog(resized_hog, **hog_params))
+
+selected_valid = list(zip(valid_paths, valid_labels))
+
+for img_path, label in tqdm(selected_valid):
+    img = cv2.imread(img_path)
+    img_gray = processing(img, resize_shape,"gray")
+  
+    # Textura descriptor
+    hist = texture_histogram(img_gray, filterbank, model1, bins=textones)
+    textura_des_valid.append(hist)
+    textura_labels_valid.append(label)
+
+
+print(f"Las dimensiones del descriptor de color son {np.array(color_des_train).shape[1]}")
+print(f"Las dimensiones del descriptor de forma son {np.array(shape_des_train).shape[1]}")
+print(f"Las dimensiones del descriptor de textura son {np.array(textura_des_train).shape[1]}")
+
+
+# Combinación de descriptores con SVM
+combinacion_descriptores = [
+    ("color + hog", color_des_train, shape_des_train, color_des_valid, shape_des_valid),
+    ("color + texture", color_des_train, textura_des_train, color_des_valid, textura_des_valid),
+    ("hog + texture", shape_des_train, textura_des_train, shape_des_valid, textura_des_valid),
+    ("color + hog + texture",
+     [np.concatenate([c, h, t]) for c, h, t in zip(color_des_train, shape_des_train, textura_des_train)],
+     None,  
+     [np.concatenate([c, h, t]) for c, h, t in zip(color_des_valid, shape_des_valid, textura_des_valid)],
+     None)
+]
+
+for name, train1, train2, val1, val2 in combinacion_descriptores:
+    if train2 is None:  #En caso de que este ya concatenado
+        train_features = train1
+        val_features = val1
+    else:
+        train_features = [np.concatenate([a, b]) for a, b in zip(train1, train2)]
+        val_features = [np.concatenate([a, b]) for a, b in zip(val1, val2)]
+
+    model = make_pipeline(StandardScaler(),SVC(kernel='rbf', C=10.0,probability=True))
+    model.fit(train_features, train_labels)
+
+    predictions = model.predict_proba(val_features)
+    
+    final_preediccion = np.argmax(predictions,axis=1)
+
+    f_score = f1_score(valid_labels, final_preediccion, average='macro')
+    print(f"F-score for {name} model: {f_score:.4f}")
+
+
+# Combinación de descriptores con RF y MLP
+combinacion_descriptores = [
+    ("color + hog", color_des_train, shape_des_train, color_des_valid, shape_des_valid),
+    ("color + texture", color_des_train, textura_des_train, color_des_valid, textura_des_valid),
+    ("hog + texture", shape_des_train, textura_des_train, shape_des_valid, textura_des_valid),
+    ("color + hog + texture",
+     [np.concatenate([c, h, t]) for c, h, t in zip(color_des_train, shape_des_train, textura_des_train)],
+     None,  
+     [np.concatenate([c, h, t]) for c, h, t in zip(color_des_valid, shape_des_valid, textura_des_valid)],
+     None)
+]
+
+for name, train1, train2, val1, val2 in combinacion_descriptores:
+    if train2 is None:  #En caso de que este ya concatenado
+        train_features = train1
+        val_features = val1
+    else:
+        train_features = [np.concatenate([a, b]) for a, b in zip(train1, train2)]
+        val_features = [np.concatenate([a, b]) for a, b in zip(val1, val2)]    
+    
+    Model_RF = RandomForestClassifier(n_estimators=100, random_state=30)
+    Model_RF.fit(train_features, train_labels)
+    
+    predictions_RF = Model_RF.predict(val_features)
+    f_score_RF = f1_score(valid_labels, predictions_RF, average='macro')
+
+    print(f"Para el clasificador RF se obtiene:")
+    print(f"El F-score para la combinación de descriptores {name} es: {f_score_RF:.4f}")
+    
+    # Modelos de MLP
+    MLP_model = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=30)
+    MLP_model.fit(train_features, train_labels)
+    predictions_MLP = MLP_model.predict(val_features)
+    f_score_MLP = f1_score(valid_labels, predictions_MLP, average='macro')
+
+    print(f"Para el clasificador MLP se obtiene:")
+    print(f"El F-score para la combinación de descriptores {name} es: {f_score_MLP:.4f}")
+
+
+# Descriptor de color 
+
+# Modelo RF
+RF_color = RandomForestClassifier(n_estimators=100, random_state=30)
+RF_color.fit(color_des_train, train_labels)
+
+# Modelo MLP
+MLP_color = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=30)
+MLP_color.fit(color_des_train, train_labels)
+
+# Modelo SVM
+SVM_color = make_pipeline(StandardScaler(), SVC(probability=True, random_state=42))
+SVM_color.fit(color_des_train, train_labels)
+
+
+# Descriptor de shape
+
+# Modelo RF
+RF_shape = RandomForestClassifier(n_estimators=100, random_state=30)
+RF_shape.fit(shape_des_train, train_labels)
+
+# Modelo MLP
+MLP_shape = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=30)
+MLP_shape.fit(shape_des_train, train_labels)
+
+# Modelo SVM
+SVM_shape = make_pipeline(StandardScaler(), SVC(probability=True, random_state=42))
+SVM_shape.fit(shape_des_train, train_labels)
+
+
+# Descriptor de textura
+
+# Modelo RF
+RF_textura = RandomForestClassifier(n_estimators=100, random_state=30)
+RF_textura.fit(textura_des_train, train_labels)
+
+# Modelo MLP
+MLP_textura = MLPClassifier(hidden_layer_sizes=(100,), max_iter=1000, random_state=30)
+MLP_textura.fit(textura_des_train, train_labels)
+
+# Modelo SVM
+SVM_textura = make_pipeline(StandardScaler(), SVC(probability=True, random_state=42))
+SVM_textura.fit(textura_des_train, train_labels)
+
+
+#Modelos
+modelo_RF = [RF_color, RF_shape, RF_textura]
+modelo_MLP = [MLP_color, MLP_shape, MLP_textura]
+modelo_SVM = [SVM_color, SVM_shape, SVM_textura]
+
+# Inputs
+RF_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+MLP_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+SVM_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+
+
+# Predicción de probabilidades para SVM RF y MLP 
+proba_color_valid_RF, proba_shape_valid_RF, proba_textura_valid_RF = [model.predict_proba(data) for model, data in zip(modelo_RF, RF_inputs)]
+proba_color_valid_MLP, proba_shape_valid_MLP, proba_textura_valid_MLP = [model.predict_proba(data) for model, data in zip(modelo_MLP, MLP_inputs)]
+proba_color_valid_SVM, proba_shape_valid_SVM, proba_textura_valid_SVM = [model.predict_proba(data) for model, data in zip(modelo_SVM, SVM_inputs)]
+
+
+# Predicciones
+color_predict_RF, shape_predict_RF, textura_predict_RF = [model.predict(data) for model, data in zip(modelo_RF, RF_inputs)]
+color_predict_MLP, shape_predict_MLP, textura_predict_MLP = [model.predict(data) for model, data in zip(modelo_MLP, MLP_inputs)]
+color_predict_SVM, shape_predict_SVM, textura_predict_SVM = [model.predict(data) for model, data in zip(modelo_SVM, SVM_inputs)]
+
+
+# Modelos expertos
+avg_proba_RF = (proba_color_valid_RF + proba_shape_valid_RF + proba_textura_valid_RF) / 3
+avg_proba_MLP = (proba_color_valid_MLP + proba_shape_valid_MLP + proba_textura_valid_MLP) / 3
+avg_proba_SVM = (proba_color_valid_SVM + proba_shape_valid_SVM + proba_textura_valid_SVM) / 3
+
+experto_RF_predict = np.argmax(avg_proba_RF, axis=1)
+experto_MLP_predict = np.argmax(avg_proba_MLP, axis=1)
+experto_SVM_predict = np.argmax(avg_proba_SVM, axis=1)
+
+
+# F1 score
+
+# Modelo RF
+f_color_RF=f1_score(valid_labels,color_predict_RF,average='macro')
+f_shape_RF=f1_score(valid_labels,shape_predict_RF,average='macro')
+f_textura_RF=f1_score(valid_labels,textura_predict_RF,average='macro')
+f_experto_RF=f1_score(valid_labels,experto_RF_predict,average='macro')
+
+# Modelo MLP
+f_color_MLP=f1_score(valid_labels,color_predict_MLP,average='macro')
+f_shape_MLP=f1_score(valid_labels,shape_predict_MLP,average='macro')
+f_textura_MLP=f1_score(valid_labels,textura_predict_MLP,average='macro')
+f_experto_MLP=f1_score(valid_labels,experto_MLP_predict,average='macro')
+
+# Modelo SVM
+f_color_SVM=f1_score(valid_labels,color_predict_SVM,average='macro')
+f_shape_SVM=f1_score(valid_labels,shape_predict_SVM,average='macro')
+f_textura_SVM=f1_score(valid_labels,textura_predict_SVM,average='macro')
+f_experto_SVM=f1_score(valid_labels,experto_SVM_predict,average='macro')
+
+print('Random Forest')
+print(f'color: {f_color_RF}')
+print(f'forma: {f_shape_RF}')
+print(f'textura: {f_textura_RF}')
+print(f'final: {f_experto_RF}')
+print('MLP')
+print(f'color: {f_color_MLP}')
+print(f'forma: {f_shape_MLP}')
+print(f'textura: {f_textura_MLP}')
+print(f'final: {f_experto_MLP}')
+print('MLP')
+print(f'color: {f_color_SVM}')
+print(f'forma: {f_shape_SVM}')
+print(f'textura: {f_textura_SVM}')
+print(f'final: {f_experto_SVM}')
+
+
+# Descriptor de color 
+
+# Modelo RF
+RF_color = RandomForestClassifier(n_estimators=200, random_state=42,max_depth=10)
+RF_color.fit(color_des_train, train_labels)
+
+# Modelo MLP
+MLP_color = MLPClassifier( hidden_layer_sizes=(150,50), max_iter=1500, alpha =0.001, random_state=42)
+MLP_color.fit(color_des_train, train_labels)
+
+# Modelo SVM
+SVM_color = make_pipeline(StandardScaler(), SVC(probability=True,random_state=42, kernel="poly", degree=4, C=5, gamma="scale"))
+SVM_color.fit(color_des_train, train_labels)
+
+
+# Descriptor de shape
+
+# Modelo RF
+RF_shape = RandomForestClassifier(n_estimators=200, random_state=42,max_depth=10)
+RF_shape.fit(shape_des_train, train_labels)
+
+# Modelo MLP
+MLP_shape = MLPClassifier( hidden_layer_sizes=(150,50), max_iter=1500, alpha =0.001, random_state=42)
+MLP_shape.fit(shape_des_train, train_labels)
+
+# Modelo SVM
+SVM_shape = make_pipeline(StandardScaler(), SVC(probability=True,random_state=42, kernel="poly", degree=4, C=5, gamma="scale"))
+SVM_shape.fit(shape_des_train, train_labels)
+
+
+# Descriptor de textura
+
+# Modelo RF
+RF_textura = RandomForestClassifier(n_estimators=200, random_state=42,max_depth=10)
+RF_textura.fit(textura_des_train, train_labels)
+
+# Modelo MLP
+MLP_textura = MLPClassifier( hidden_layer_sizes=(150,50), max_iter=1500, alpha =0.001, random_state=42)
+MLP_textura.fit(textura_des_train, train_labels)
+
+# Modelo SVM
+SVM_textura = make_pipeline(StandardScaler(), SVC(probability=True,random_state=42, kernel="poly", degree=4, C=5, gamma="scale"))
+SVM_textura.fit(textura_des_train, train_labels)
+
+
+#Modelos
+modelo_RF = [RF_color, RF_shape, RF_textura]
+modelo_MLP = [MLP_color, MLP_shape, MLP_textura]
+modelo_SVM = [SVM_color, SVM_shape, SVM_textura]
+
+# Inputs
+RF_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+MLP_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+SVM_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+
+
+# Predicción de probabilidades para SVM RF y MLP 
+proba_color_valid_RF, proba_shape_valid_RF, proba_textura_RF = [model.predict_proba(data) for model, data in zip(modelo_RF, RF_inputs)]
+proba_color_valid_MLP, proba_shape_valid_MLP, proba_textura_MLP = [model.predict_proba(data) for model, data in zip(modelo_MLP, MLP_inputs)]
+proba_color_valid_SVM, proba_shape_valid_SVM, proba_textura_SVM = [model.predict_proba(data) for model, data in zip(modelo_SVM, SVM_inputs)]
+
+
+# Predicciones
+color_predict_RF, shape_predict_RF, textura_predict_RF = [model.predict(data) for model, data in zip(modelo_RF, RF_inputs)]
+color_predict_MLP, shape_predict_MLP, textura_predict_MLP = [model.predict(data) for model, data in zip(modelo_MLP, MLP_inputs)]
+color_predict_SVM, shape_predict_SVM, textura_predict_SVM = [model.predict(data) for model, data in zip(modelo_SVM, SVM_inputs)]
+
+
+# Modelos expertos
+avg_proba_RF = (proba_color_valid_RF + proba_shape_valid_RF + proba_textura_RF) / 3
+avg_proba_MLP = (proba_color_valid_MLP + proba_shape_valid_MLP + proba_textura_MLP) / 3
+avg_proba_SVM = (proba_color_valid_SVM + proba_shape_valid_SVM + proba_textura_SVM) / 3
+
+experto_RF_predict = np.argmax(avg_proba_RF, axis=1)
+experto_MLP_predict = np.argmax(avg_proba_MLP, axis=1)
+experto_SVM_predict = np.argmax(avg_proba_SVM, axis=1)
+
+
+# F1 score
+
+# Modelo RF
+f_color_RF=f1_score(valid_labels,color_predict_RF,average='macro')
+f_shape_RF=f1_score(valid_labels,shape_predict_RF,average='macro')
+f_textura_RF=f1_score(valid_labels,textura_predict_RF,average='macro')
+f_experto_RF=f1_score(valid_labels,experto_RF_predict,average='macro')
+
+# Modelo MLP
+f_color_MLP=f1_score(valid_labels,color_predict_MLP,average='macro')
+f_shape_MLP=f1_score(valid_labels,shape_predict_MLP,average='macro')
+f_textura_MLP=f1_score(valid_labels,textura_predict_MLP,average='macro')
+f_experto_MLP=f1_score(valid_labels,experto_MLP_predict,average='macro')
+
+# Modelo SVM
+f_color_SVM=f1_score(valid_labels,color_predict_SVM,average='macro')
+f_shape_SVM=f1_score(valid_labels,shape_predict_SVM,average='macro')
+f_textura_SVM=f1_score(valid_labels,textura_predict_SVM,average='macro')
+f_experto_SVM=f1_score(valid_labels,experto_SVM_predict,average='macro')
+
+print('Random Forest')
+print(f'color: {f_color_RF}')
+print(f'forma: {f_shape_RF}')
+print(f'textura: {f_textura_RF}')
+print(f'final: {f_experto_RF}')
+print('MLP')
+print(f'color: {f_color_MLP}')
+print(f'forma: {f_shape_MLP}')
+print(f'textura: {f_textura_MLP}')
+print(f'final: {f_experto_MLP}')
+print('SVM')
+print(f'color: {f_color_SVM}')
+print(f'forma: {f_shape_SVM}')
+print(f'textura: {f_textura_SVM}')
+print(f'final: {f_experto_SVM}')
+
+
+# Descriptor de color 
+
+# Modelo RF
+RF_color = RandomForestClassifier(n_estimators=200, max_depth=None, random_state=0)
+RF_color.fit(color_des_train, train_labels)
+
+# Modelo MLP
+MLP_color = MLPClassifier( hidden_layer_sizes=(50,), max_iter=1500, random_state=0)
+MLP_color.fit(color_des_train, train_labels)
+
+# Modelo SVM
+SVM_color = make_pipeline(StandardScaler(), SVC(probability=True,random_state=0, kernel="sigmoid", C=1, gamma="auto"))
+SVM_color.fit(color_des_train, train_labels)
+
+
+# Descriptor de shape
+
+# Modelo RF
+RF_shape = RandomForestClassifier(n_estimators=200, max_depth=None, random_state=0)
+RF_shape.fit(shape_des_train, train_labels)
+
+# Modelo MLP
+MLP_shape = MLPClassifier(hidden_layer_sizes=(50,), max_iter=1500, random_state=0)
+MLP_shape.fit(shape_des_train, train_labels)
+
+# Modelo SVM
+SVM_shape = make_pipeline(StandardScaler(), SVC(probability=True,random_state=0, kernel="sigmoid", C=1, gamma="auto"))
+SVM_shape.fit(shape_des_train, train_labels)
+
+
+# Descriptor de textura
+
+# Modelo RF
+RF_textura = RandomForestClassifier(n_estimators=200, max_depth=None, random_state=0)
+RF_textura.fit(textura_des_train, train_labels)
+
+# Modelo MLP
+MLP_textura = MLPClassifier(hidden_layer_sizes=(50,), max_iter=1500, random_state=0)
+MLP_textura.fit(textura_des_train, train_labels)
+
+# Modelo SVM
+SVM_textura = make_pipeline(StandardScaler(), SVC(probability=True,random_state=0, kernel="sigmoid", C=1, gamma="auto"))
+SVM_textura.fit(textura_des_train, train_labels)
+
+
+#Modelos
+modelo_RF = [RF_color, RF_shape, RF_textura]
+modelo_MLP = [MLP_color, MLP_shape, MLP_textura]
+modelo_SVM = [SVM_color, SVM_shape, SVM_textura]
+
+# Inputs
+RF_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+MLP_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+SVM_inputs = [color_des_valid, shape_des_valid, textura_des_valid]
+
+
+# Predicción de probabilidades para SVM RF y MLP 
+proba_color_valid_RF, proba_shape_valid_RF, proba_textura_RF = [model.predict_proba(data) for model, data in zip(modelo_RF, RF_inputs)]
+proba_color_valid_MLP, proba_shape_valid_MLP, proba_textura_MLP = [model.predict_proba(data) for model, data in zip(modelo_MLP, MLP_inputs)]
+proba_color_valid_SVM, proba_shape_valid_SVM, proba_textura_SVM = [model.predict_proba(data) for model, data in zip(modelo_SVM, SVM_inputs)]
+
+
+# Predicciones
+color_predict_RF, shape_predict_RF, textura_predict_RF = [model.predict(data) for model, data in zip(modelo_RF, RF_inputs)]
+color_predict_MLP, shape_predict_MLP, textura_predict_MLP = [model.predict(data) for model, data in zip(modelo_MLP, MLP_inputs)]
+color_predict_SVM, shape_predict_SVM, textura_predict_SVM = [model.predict(data) for model, data in zip(modelo_SVM, SVM_inputs)]
+
+
+# Modelos expertos
+avg_proba_RF = (proba_color_valid_RF + proba_shape_valid_RF + proba_textura_RF) / 3
+avg_proba_MLP = (proba_color_valid_MLP + proba_shape_valid_MLP + proba_textura_MLP) / 3
+avg_proba_SVM = (proba_color_valid_SVM + proba_shape_valid_SVM + proba_textura_SVM) / 3
+
+experto_RF_predict = np.argmax(avg_proba_RF, axis=1)
+experto_MLP_predict = np.argmax(avg_proba_MLP, axis=1)
+experto_SVM_predict = np.argmax(avg_proba_SVM, axis=1)
+
+
+# F1 score
+
+# Modelo RF
+f_color_RF=f1_score(valid_labels,color_predict_RF,average='macro')
+f_shape_RF=f1_score(valid_labels,shape_predict_RF,average='macro')
+f_textura_RF=f1_score(valid_labels,textura_predict_RF,average='macro')
+f_experto_RF=f1_score(valid_labels,experto_RF_predict,average='macro')
+
+# Modelo MLP
+f_color_MLP=f1_score(valid_labels,color_predict_MLP,average='macro')
+f_shape_MLP=f1_score(valid_labels,shape_predict_MLP,average='macro')
+f_textura_MLP=f1_score(valid_labels,textura_predict_MLP,average='macro')
+f_experto_MLP=f1_score(valid_labels,experto_MLP_predict,average='macro')
+
+# Modelo SVM
+f_color_SVM=f1_score(valid_labels,color_predict_SVM,average='macro')
+f_shape_SVM=f1_score(valid_labels,shape_predict_SVM,average='macro')
+f_textura_SVM=f1_score(valid_labels,textura_predict_SVM,average='macro')
+f_experto_SVM=f1_score(valid_labels,experto_SVM_predict,average='macro')
+
+print('Random Forest')
+print(f'color: {f_color_RF}')
+print(f'forma: {f_shape_RF}')
+print(f'textura: {f_textura_RF}')
+print(f'final: {f_experto_RF}')
+print('MLP')
+print(f'color: {f_color_MLP}')
+print(f'forma: {f_shape_MLP}')
+print(f'textura: {f_textura_MLP}')
+print(f'final: {f_experto_MLP}')
+print('MLP')
+print(f'color: {f_color_SVM}')
+print(f'forma: {f_shape_SVM}')
+print(f'textura: {f_textura_SVM}')
+print(f'final: {f_experto_SVM}')
+
+
+import numpy as np
+import cv2
+import random
+
+def data_augmentation(Im: np.ndarray, transformations: list[str],
+                      alpha_factor: tuple[float] = (0.8, 1.2),
+                      beta_factor: tuple[int] = (-30, 30)) -> np.ndarray:
+    augmented = Im.copy()
+
+    # Horizontal Flip
+    if "flip" in transformations:
+        augmented = cv2.flip(augmented, 1)
+
+    # Brightness & Contrast
+    if "brightness and contrast" in transformations:
+        alpha = random.uniform(*alpha_factor)
+        beta = random.uniform(*beta_factor)
+        augmented = cv2.convertScaleAbs(augmented, alpha=alpha, beta=beta)
+
+    elif "contrast" in transformations:
+        beta = random.uniform(*beta_factor)
+        augmented = cv2.convertScaleAbs(augmented, alpha=1, beta=beta)
+
+    elif "brightness" in transformations:
+        alpha = random.uniform(*alpha_factor)
+        augmented = cv2.convertScaleAbs(augmented, alpha=alpha, beta=0)
+
+    # baja nitidez 
+    if "blur" in transformations:
+        ksize = random.choice([3, 5])
+        augmented = cv2.GaussianBlur(augmented, (ksize, ksize), 0)
+
+    # rotación
+    if "rotate" in transformations:
+        angle = random.uniform(-15, 15)
+        h, w = augmented.shape[:2]
+        M = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1)
+        augmented = cv2.warpAffine(augmented, M, (w, h))
+
+    # escalar
+    if "scale" in transformations:
+        scale_factor = random.uniform(0.9, 1.1)
+        augmented = cv2.resize(augmented, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_LINEAR)
+        
+        augmented = cv2.resize(augmented, (Im.shape[1], Im.shape[0]))
+
+    # Translation
+    if "translate" in transformations:
+        tx = random.randint(-10, 10)
+        ty = random.randint(-10, 10)
+        M = np.float32([[1, 0, tx], [0, 1, ty]])
+        augmented = cv2.warpAffine(augmented, M, (Im.shape[1], Im.shape[0]))
+
+    # ruido
+    if "noise" in transformations:
+        noise = np.random.normal(0, 10, augmented.shape).astype(np.uint8)
+        augmented = cv2.add(augmented, noise)
+
+    # quitar el ruido
+    if "denoise" in transformations:
+        augmented = cv2.fastNlMeansDenoisingColored(augmented, None, 10, 10, 7, 21)
+
+    return augmented
+
+
+import matplotlib.pyplot as plt
+import cv2
+import numpy as np
+
+#Cargar 2 imagenes
+img_paths = [train_paths[0], train_paths[1]]
+images_rgb = [cv2.cvtColor(cv2.imread(p), cv2.COLOR_BGR2RGB) for p in img_paths]
+
+#Aplicar filtros
+augmentations = [
+    "flip",
+    "brightness and contrast",
+    "blur",
+    "rotate",
+    "scale",
+    "translate",
+    "noise",
+    "denoise"
+]
+
+n_rows = len(augmentations) + 1
+n_cols = 2
+
+plt.figure(figsize=(10, 18))
+for i, img_rgb in enumerate(images_rgb):
+    # Original 
+    plt.subplot(n_rows, n_cols, 1 + i)
+    plt.imshow(img_rgb)
+    plt.title(f"Original {i + 1}")
+    plt.axis("off")
+
+    # Aplicar augmentation
+    for j, aug in enumerate(augmentations):
+        aug_img = data_augmentation(
+            img_rgb,
+            transformations=[aug],
+            alpha_factor=(0.9, 1.1),
+            beta_factor=(-30, 30)
+        )
+        plt.subplot(n_rows, n_cols, (j + 1) * 2 + i + 1)
+        plt.imshow(aug_img)
+        plt.title(f"{aug.title()} {i + 1}")
+        plt.axis("off")
+
+plt.tight_layout()
+plt.show()
+
+
+from tqdm import tqdm
+import cv2
+import numpy as np
+from skimage.feature import hog
+from skimage.transform import resize
+
+# Parametros
+resize_shape = (256, 256)
+patch_sizes = [(256, 256), (128, 128), (64, 64)]
+bins = 50
+hog_params = dict(
+    orientations=10,
+    pixels_per_cell=(8, 8),
+    cells_per_block=(2, 2),
+    visualize=False,
+    channel_axis=-1
+)
+
+# Almacenar listas
+aug_color_des_train = []
+aug_shape_des_train = []
+aug_texture_des_train = []
+aug_train_labels = []
+
+# Maximo numera de muestras
+max_augmented = 5163
+augmented_so_far = 0
+
+# === Loop ===
+for img_path, label in tqdm(zip(train_paths, train_labels), total=len(train_paths), desc="Aumento del dataset"):
+    if augmented_so_far >= max_augmented:
+        break
+
+    img = cv2.imread(img_path)
+    if img is None:
+        continue
+
+    img_rgb = processing(img, resize_shape, "rgb")
+
+    # === Descriptores para la imagen Original===
+    color_desc = Color_pyramid(img_rgb, patch_sizes, "concat", bins)
+    hog_desc = hog(resize(img_rgb, (128, 64)), **hog_params)
+    texture_desc = texture_histogram(img_rgb,filterbank,model1,bins=25)
+
+    aug_color_des_train.append(color_desc)
+    aug_shape_des_train.append(hog_desc)
+    aug_texture_des_train.append(texture_desc)
+    aug_train_labels.append(label)
+
+    # === generar imagen ===
+    aug_img = data_augmentation(
+        img_rgb,
+        transformations=["flip", "brightness and contrast", "denoise", "contrast", "blur", "rotate", "scale", "translate"],
+        alpha_factor=(0.9, 1.1),
+        beta_factor=(-30, 30)
+    )
+
+    # === Descriptores con las nuevas Imagagenes ===
+    color_desc_aug = Color_pyramid(aug_img, patch_sizes, "concat", bins)
+    hog_desc_aug = hog(resize(aug_img, (128, 64)), **hog_params)
+    texture_desc_aug =texture_histogram(aug_img,filterbank,model1,bins=25)
+
+    aug_color_des_train.append(color_desc_aug)
+    aug_shape_des_train.append(hog_desc_aug)
+    aug_train_labels.append(label)
+    aug_texture_des_train.append(texture_desc)
+
+    # Contador
+    augmented_so_far += 1
+
+
+print(len(aug_shape_des_train))
+print(len(aug_color_des_train))
+print(len(aug_texture_des_train))
+
+
+
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from tqdm import tqdm
+
+# === Hiperparametros ===
+kernels = ['linear', 'rbf']
+C_values = [1.0, 10.0]
+
+# === Entrenar SVMs para COLOR (pyramid descriptor) ===
+print("Entrenando SVMs con descriptores de COLOR (piramide)...")
+
+
+svm_kernel2_C1_color = make_pipeline(StandardScaler(),SVC(probability=True,kernel=kernels[1], C=C_values[0]))
+svm_kernel2_C1_color.fit(aug_color_des_train, aug_train_labels)
+
+svm_kernel2_C2_color = make_pipeline(StandardScaler(),SVC(probability=True,kernel=kernels[1], C=C_values[1]))
+svm_kernel2_C2_color.fit(aug_color_des_train, aug_train_labels)
+
+# === Entrenar SVMs para forma (HOG) ===
+print("Entrenando SVMs con descriptores de FORMA (HOG)...")
+
+
+svm_kernel2_C1_forma = make_pipeline(StandardScaler(),SVC(probability=True,kernel=kernels[1], C=C_values[0]))
+svm_kernel2_C1_forma.fit(aug_shape_des_train, aug_train_labels)
+
+
+svm_kernel2_C2_forma = make_pipeline(StandardScaler(),SVC(probability=True,kernel=kernels[1], C=C_values[1]))
+svm_kernel2_C2_forma.fit(aug_shape_des_train, aug_train_labels)
+
+# === Entrenar SVMs para Textura ===
+print("Entrenando SVMs con descriptores de TEXTURA (textones)...")
+
+svm_kernel2_C1_textura = make_pipeline(StandardScaler(),SVC(probability=True,kernel=kernels[1], C=C_values[0]))
+svm_kernel2_C1_textura.fit(aug_texture_des_train, aug_train_labels)
+
+svm_kernel2_C2_textura = make_pipeline(StandardScaler(),SVC(probability=True,kernel=kernels[1], C=C_values[1]))
+svm_kernel2_C2_textura.fit(aug_texture_des_train, aug_train_labels)
+
+
+from sklearn.metrics import precision_recall_fscore_support
+
+# === PREDICTIONS ===
+final_predict1=[] #predicción final por expertos
+color_predict1=[] #predicción final por color
+shape_predict1=[] #predicción final por forma
+final_predict2=[] #predicción final por expertos
+color_predict2=[] #predicción final por color
+shape_predict2=[] #predicción final por forma
+
+# Color Pyramid
+predict_svm_kernel2_C1_color = svm_kernel2_C1_color.predict_proba(color_des_valid)
+predict_svm_kernel2_C2_color = svm_kernel2_C2_color.predict_proba(color_des_valid)
+
+# HOG
+predict_svm_kernel2_C1_hog = svm_kernel2_C1_forma.predict_proba(shape_des_valid)
+predict_svm_kernel2_C2_hog = svm_kernel2_C2_forma.predict_proba(shape_des_valid)
+
+# TEXTURA
+predict_svm_kernel2_C1_textura = svm_kernel2_C1_textura.predict_proba(textura_des_valid)
+predict_svm_kernel2_C2_textura = svm_kernel2_C2_textura.predict_proba(textura_des_valid)
+
+color_predict1 = np.argmax(predict_svm_kernel2_C1_color, axis=1)
+shape_predict1 = np.argmax(predict_svm_kernel2_C1_hog, axis=1)
+textura_predict1 = np.argmax(predict_svm_kernel2_C1_textura, axis=1)
+
+# Promedio de las probabilidades
+average_proba1 = (color_predict1 + shape_predict1+ textura_predict1 ) / 3
+
+# Predicción final basada en el promedio de probabilidades
+final_predict1 = np.argmax(average_proba1, axis=1)
+
+f_color1=f1_score(valid_labels,color_predict1,average='macro')
+f_shape1=f1_score(valid_labels,shape_predict1,average='macro')
+f_textura1=f1_score(valid_labels,textura_predict1,average='macro')
+
+f_final1=f1_score(valid_labels,final_predict1,average='macro')
+
+print(f'color: {f_color1}')
+print(f'forma: {f_shape1}')
+print(f'textura: {f_textura1}')
+print(f'final: {f_final1}')
+
+# === F1 EVALUACION PUNTAJE ===
+
+color_predict2 = np.argmax(predict_svm_kernel2_C2_color, axis=1)
+shape_predict2 = np.argmax(predict_svm_kernel2_C2_hog, axis=1)
+textura_predict2 = np.argmax(predict_svm_kernel2_C2_textura, axis=1)
+
+# Promedio de las probabilidades
+average_proba2 = (color_predict2 + shape_predict2+ textura_predict2 ) / 3
+
+# Predicción final basada en el promedio de probabilidades
+final_predict2 = np.argmax(average_proba2, axis=1)
+
+f_color2=f1_score(valid_labels,color_predict2,average='macro')
+f_shape2=f1_score(valid_labels,shape_predict2,average='macro')
+f_textura2=f1_score(valid_labels,textura_predict2,average='macro')
+
+f_final2=f1_score(valid_labels,final_predict2,average='macro')
+
+print(f'color: {f_color2}')
+print(f'forma: {f_shape2}')
+print(f'textura: {f_textura2}')
+print(f'final: {f_final2}')
+
+
+from sklearn.svm import SVC
+from sklearn.metrics import f1_score
+import numpy as np
+
+# === Combinaciones con dataset AUMENTADO para entrenamiento ===
+combinacion_descriptores = [
+    ("color + hog", aug_color_des_train, aug_shape_des_train, color_des_valid, shape_des_valid),
+    ("color + texture", aug_color_des_train, aug_texture_des_train, color_des_valid, textura_des_valid),
+    ("hog + texture", aug_shape_des_train, aug_texture_des_train, shape_des_valid, textura_des_valid),
+    ("color + hog + texture",
+     [np.concatenate([c, h, t]) for c, h, t in zip(aug_color_des_train, aug_shape_des_train, aug_texture_des_train)],
+     None,
+     [np.concatenate([c, h, t]) for c, h, t in zip(color_des_valid, shape_des_valid, texture_des_valid)],
+     None)
+]
+
+print("Evaluación de combinaciones multimodales con SVM:")
+print("-" * 60)
+
+for name, train1, train2, val1, val2 in combinacion_descriptores:
+    if train2 is None:
+        train_features = train1
+        val_features = val1
+    else:
+        train_features = [np.concatenate([a, b]) for a, b in zip(train1, train2)]
+        val_features = [np.concatenate([a, b]) for a, b in zip(val1, val2)]
+
+    model = SVC(kernel='rbf', C=10.0, probability=True)
+    model.fit(train_features, aug_train_labels)  # note: usando labels aumentado
+
+    predictions = model.predict(val_features)
+    f_score = f1_score(valid_labels, predictions, average='macro')
+
+    print(f"F-score para la combinación {name}: {f_score:.4f}")
+
+
+from sklearn.metrics import f1_score
+import numpy as np
+
+# === Combinaciones con dataset AUMENTADO para entrenamiento ===
+combinacion_descriptores = [
+    ("color + hog", aug_color_des_train, aug_shape_des_train, color_des_valid, shape_des_valid),
+    ("color + texture", aug_color_des_train, aug_texture_des_train, color_des_valid, textura_des_valid),
+    ("hog + texture", aug_shape_des_train, aug_texture_des_train, shape_des_valid, textura_des_valid),
+    ("color + hog + texture",
+     [np.concatenate([c, h, t]) for c, h, t in zip(aug_color_des_train, aug_shape_des_train, aug_texture_des_train)],
+     None,
+     [np.concatenate([c, h, t]) for c, h, t in zip(color_des_valid, shape_des_valid, textura_des_valid)],
+     None)]
+
+print("Evaluación de combinaciones multimodales con SVM:")
+print("-" * 60)
+
+for name, train1, train2, val1, val2 in combinacion_descriptores:
+    if train2 is None:
+        train_features = train1
+        val_features = val1
+    else:
+        train_features = [np.concatenate([a, b]) for a, b in zip(train1, train2)]
+        val_features = [np.concatenate([a, b]) for a, b in zip(val1, val2)]
+
+    model = SVC(kernel='rbf', C=10.0, probability=True)
+    model.fit(train_features, aug_train_labels)  # note: usando labels aumentado
+
+    predictions = model.predict(val_features)
+    f_score = f1_score(valid_labels, predictions, average='macro')
+
+    print(f"F-score para la combinación {name}: {f_score:.4f}")
+
+
+# Concatenar los descriptores de entrenamiento (color + hog + texture)
+train_multimodal_desc = [
+    np.concatenate([c, h, t])
+    for c, h, t in zip(aug_color_des_train, aug_shape_des_train, aug_texture_des_train)
+]
+
+# Entrenar el mejor modelo
+final_model = SVC(kernel='rbf', C=10.0, probability=True)
+final_model.fit(train_multimodal_desc, aug_train_labels)
+
+assert final_model > baseline 'Necesita refinar su modelo multimodal'
+
+print
+
+
+def Demo(Im: np.ndarray) -> int:
+    """Función que predice la clase de una imagen
+
+    Args:
+        Im (numpy.ndarray): Imagen a predecir
+
+    Returns:
+        int: Clase predicha
+    """
+    # YOUR CODE HERE
+    # === Preprocesamiento ===
+    resize_shape = (256, 256)
+    patch_sizes = [(256, 256), (128, 128), (64, 64)]
+    bins_color = 50
+    bins_texture = 25
+    hog_params = dict(
+        orientations=10,
+        pixels_per_cell=(8, 8),
+        cells_per_block=(2, 2),
+        visualize=False,
+        channel_axis=-1
+    )
+
+    # Convertir a RGB si es necesario
+    img_rgb = processing(Im, resize_shape, "rgb")
+
+    # === Extraer descriptores ===
+    color_desc = Color_pyramid(img_rgb, patch_sizes, "concat", bins_color)
+    hog_desc = hog(resize(img_rgb, (128, 64)), **hog_params)
+    texture_desc = texture_histogram(img_rgb, filterbank, model1, bins=bins_texture)
+
+    # === Concatenar descriptor multimodal ===
+    combined_desc = np.concatenate([color_desc, hog_desc, texture_desc]).reshape(1, -1)
+
+    # === Predecir con el mejor modelo ===
+    predict = final_model.predict(combined_desc)[0]
+
+    return predict
+
+
+test_predict=[]
+test_labels_list=[]
+pbar = tqdm(total = len(test_paths))
+for path, label in zip(test_paths, test_labels):
+    Im=cv2.imread(path)
+    test_labels_list.append(label)
+    test_predict.append(Demo(Im))
+    pbar.update(1)
+pbar.close()
+f_test=f1_score(test_labels_list,test_predict,average='macro')
+precision = precision_score(test_labels_list, test_predict, average='macro')
+recall = recall_score(test_labels_list, test_predict, average='macro')
+
+# Imprimir resultados
+print(f" F1-score  (macro): {f1:.4f}")
+print(f" Precision (macro): {precision:.4f}")
+print(f  Recall    (macro): {recall:.4f}")
+
+
+assert (np.unique(test_predict) == np.arange(0, 5, 1)).all(), 'Las clases predichas no son las correctas'
+assert not np.isclose(np.std(test_predict), 0.0), 'Las predicciones no son las esperadas'
+print(f'Su metrica final en Test es: {f_test:.3f}')
+assert f_test>0.6, 'Su modelo no generaliza bien'
+
+
+from utils import *
+converter("Main_ Acosta_Salazar_Vidales")
+
+
+
+
+

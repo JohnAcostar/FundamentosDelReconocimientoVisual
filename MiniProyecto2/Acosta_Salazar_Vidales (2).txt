@@ -1,0 +1,1056 @@
+import os
+import numpy as np
+from glob import glob
+from tqdm import tqdm
+import nibabel as nib
+from skimage.measure import label
+from matplotlib import pyplot as plt
+from skimage.segmentation import watershed
+from skimage.morphology import dilation, erosion, opening, closing, h_minima, ball, disk, cube
+
+import warnings
+try:
+    import cupy as cp
+except ImportError:
+    warnings.warn("CuPy not found. Falling back to NumPy.")
+
+
+borders = '' #Variable que tendrá los bordes del volumen 1 de entrenamiento 
+element = '' #Variable que tendrá un elemento estructurante de esfera de radio 5
+
+vol1 = nib.load(os.path.join('DB', 'train', 'volume_1.nii.gz')).get_fdata()
+seg1=nib.load(os.path.join('DB', 'train', 'segmentation_1.nii.gz')).get_fdata()
+
+element = ball(5) #Variable que tendrá un elemento estructurante de esfera de radio 5
+
+def morph_gradient(gray_img,EE):
+    result = "" #Variable que tendrá la imagen resultante
+    dilated = dilation(gray_img, EE)
+    eroded = erosion(gray_img, EE)
+    result = dilated - eroded
+    return result
+
+borders = morph_gradient(vol1,element)
+
+
+assert borders.shape == (512,512,123), f'Alteró el tamaño de su volumen, debe ser (512,512,123) no {borders.shape}'
+assert len(element.shape)==3,f'su elemento estructurante debería tener 3 dimensiones, no {len(element.shape)}'
+assert element.shape==(11,11,11),f'su elemento estructurante está definido erroneamente su tamaño debe ser (512,512,2), no {element.shape}'
+assert len(np.unique(element))==2, f'su elemento estructurante solo debería tener 2 valores, no {len(np.unique(element))}'
+assert np.min(borders)>=0 and np.max(borders)<=1 ,f'el rango de su borde debería estar entre 0 y 1, no entre {np.min(borders)} y {np.max(borders)}'
+
+
+watersheds_org = '' #variable que tendrá el resultado de hacer watersheds sin marcadores
+# YOUR CODE HERE
+watersheds_org = watershed(borders) #variable que tendrá el resultado de hacer watersheds sin marcadores
+
+
+assert watersheds_org.shape == (512,512,123), f'Alteró el tamaño de su volumen de watersheds, debe ser (512,512,123) no {watersheds_org.shape}'
+assert watersheds_org.dtype=='int32' ,f'su volumen debería ser de tipo int 32 no {watersheds_org.dtype}'
+
+
+# YOUR CODE HERE
+total_segments = len(np.unique(watersheds_org))
+print(f"Total number of segments: {total_segments}")
+
+# Visualization of two slices
+fig, axes = plt.subplots(3, 3, figsize=(9, 12))
+
+axes[0,0].imshow(vol1[:, :, 65], cmap='gray')
+axes[0,0].set_title(f'MRI (Axial 65)')
+axes[0,0].axis('off')
+
+axes[0,1].imshow(seg1[:, :, 65], cmap='gray')
+axes[0,1].set_title(f'Segmentación (Axial 65)')
+axes[0,1].axis('off')
+
+axes[0,2].imshow(watersheds_org[:, :, 65], cmap='gray')
+axes[0,2].set_title(f'Watersheds (Axial 65)')
+axes[0,2].axis('off')
+
+img_coronal_rotada = np.rot90(vol1[:, 270, :], k=1)
+axes[1,0].imshow(img_coronal_rotada, cmap='gray',aspect='auto')
+axes[1,0].set_title(f'MRI (Coronal 270)')
+axes[1,0].axis('off')
+
+img_coronal_rotada = np.rot90(seg1[:, 270, :], k=1)
+axes[1,1].imshow(img_coronal_rotada, cmap='gray',aspect='auto')
+axes[1,1].set_title(f'Segmentación (Coronal 270)')
+axes[1,1].axis('off')
+
+img_coronal_rotada = np.rot90(watersheds_org[:, 270, :], k=1)
+axes[1,2].imshow(img_coronal_rotada, cmap='gray',aspect='auto')
+axes[1,2].set_title(f'Watersheds (Coronal 270)')
+axes[1,2].axis('off')
+
+img_sagital_rotada = np.rot90(vol1[271, :, :], k=1)
+axes[2,0].imshow(img_sagital_rotada, cmap='gray',aspect='auto')
+axes[2,0].set_title(f'MRI (Sagittal 271)')
+axes[2,0].axis('off')
+
+img_sagital_rotada = np.rot90(seg1[271, :, :], k=1)
+axes[2,1].imshow(img_sagital_rotada, cmap='gray',aspect='auto')
+axes[2,1].set_title(f'Segmentación (Sagital 271)')
+axes[2,1].axis('off')
+
+img_sagital_rotada = np.rot90(watersheds_org[271, :, :], k=1)
+axes[2,2].imshow(img_sagital_rotada, cmap='gray',aspect='auto')
+axes[2,2].set_title(f'watersheds_org (Sagital 271)')
+axes[2,2].axis('off')
+fig.suptitle("Datos de entrenamiento",  fontsize=16)
+plt.tight_layout()
+plt.show()
+
+
+
+
+minima = ''#Variable que contendrá los h-minimos
+# YOUR CODE HERE
+minima = h_minima(borders, h=1.0000000000000001)
+
+
+assert minima.shape == (512,512,123), f'Alteró el tamaño de su volumen de minimos, debe ser (512,512,123) no {minima.shape}'
+assert minima.dtype=='uint8' ,f'su volumen debería ser de tipo uint8 no {minima.dtype}'
+assert len(np.unique(minima))==2,f'sus minimos solo deberían tener 2 valores, no {len(np.unique(minima))}'
+
+
+markers = ''# Variable que tendrá los marcadores con sus respectivos labels
+watersheds_h = '' #variable que tendrá el resultado de hacer watersheds
+# YOUR CODE HERE
+markers = label(minima)
+watersheds_h = watershed(borders, markers)
+
+
+assert markers.shape == (512,512,123), f'Alteró el tamaño de su volumen de minimos, debe ser (512,512,123) no {markers.shape}'
+assert markers.dtype=='int64' ,f'su volumen de marcadores debería ser de tipo int64 no {markers.dtype}'
+assert watersheds_h.shape == (512,512,123), f'Alteró el tamaño de su volumen de watersheds, debe ser (512,512,123) no {watersheds_h.shape}'
+assert watersheds_h.dtype=='int64' ,f'su volumen de watersheds debería ser de tipo int32 no {watersheds_h.dtype}'
+assert len(np.unique(markers))-1==len(np.unique(watersheds_h)),f'sus minimos y su resultado de watersheds no tienen los mismos valores {len(np.unique(markers))} y{len(np.unique(watersheds_h))}'
+
+
+#Como paso extra visualizamos los marcadores que genera el h_minimo 
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+axes[0].imshow(markers[:, :, 65], cmap='gray')
+axes[0].set_title(f'Marcadores (Axial 65)')
+axes[0].axis('off')
+axes[0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+jiji= np.rot90(markers[:, 270, :], k=1)
+axes[1].imshow(jiji, cmap='gray')
+axes[1].set_title(f'Marcadores (Coronal 270)')
+axes[1].axis('off')
+axes[1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+juju= np.rot90(markers[271, :, :], k=1)
+axes[2].imshow(juju, cmap='gray')
+axes[2].set_title(f'Marcadores (Sagital 271)')
+axes[2].axis('off')
+axes[2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+fig.suptitle("Marcadores generados con h_minima",  fontsize=16)
+
+
+
+# YOUR CODE HERE
+total_segments = len(np.unique(watersheds_h))
+print(f"Total number of segments: {total_segments}")
+
+# Visualization of two slices
+fig, axes = plt.subplots(3, 4, figsize=(15, 12))
+
+axes[0,0].imshow(vol1[:, :, 65], cmap='gray')
+axes[0,0].set_title(f'MRI (Axial 65)')
+axes[0,0].axis('off')
+
+axes[0,1].imshow(seg1[:, :, 65], cmap='gray')
+axes[0,1].set_title(f'Segmentación (Axial 65)')
+axes[0,1].axis('off')
+
+axes[0,2].imshow(watersheds_org[:, :, 65], cmap='gray')
+axes[0,2].set_title(f'Watersheds sin marcadores (Axial 65)')
+axes[0,2].axis('off')
+
+axes[0,3].imshow(watersheds_h[:, :, 65], cmap='gray')
+axes[0,3].set_title(f'Watersheds con marcadores (Axial 65)')
+axes[0,3].axis('off')
+
+img_coronal_rotada = np.rot90(vol1[:, 270, :], k=1)
+axes[1,0].imshow(img_coronal_rotada, cmap='gray',aspect='auto')
+axes[1,0].set_title(f'MRI (Coronal 270)')
+axes[1,0].axis('off')
+
+img_coronal_rotada = np.rot90(seg1[:, 270, :], k=1)
+axes[1,1].imshow(img_coronal_rotada, cmap='gray',aspect='auto')
+axes[1,1].set_title(f'Segmentación (Coronal 270)')
+axes[1,1].axis('off')
+
+img_coronal_rotada = np.rot90(watersheds_org[:, 270, :], k=1)
+axes[1,2].imshow(img_coronal_rotada, cmap='gray',aspect='auto')
+axes[1,2].set_title(f'Watersheds sin marcadores (Coronal 270)')
+axes[1,2].axis('off')
+
+img_coronal_rotada = np.rot90(watersheds_h[:, 270, :], k=1)
+axes[1,3].imshow(img_coronal_rotada, cmap='gray',aspect='auto')
+axes[1,3].set_title(f'Watersheds con marcadores (Coronal 270)')
+axes[1,3].axis('off')
+
+img_sagital_rotada = np.rot90(vol1[271, :, :], k=1)
+axes[2,0].imshow(img_sagital_rotada, cmap='gray',aspect='auto')
+axes[2,0].set_title(f'MRI (Sagittal 271)')
+axes[2,0].axis('off')
+
+img_sagital_rotada = np.rot90(seg1[271, :, :], k=1)
+axes[2,1].imshow(img_sagital_rotada, cmap='gray',aspect='auto')
+axes[2,1].set_title(f'Segmentación (Sagittal 271)')
+axes[2,1].axis('off')
+
+img_sagital_rotada = np.rot90(watersheds_org[271, :, :], k=1)
+axes[2,2].imshow(img_sagital_rotada, cmap='gray',aspect='auto')
+axes[2,2].set_title(f'Watersheds sin marcadores (Sagital 271)')
+axes[2,2].axis('off')
+
+img_sagital_rotada = np.rot90(watersheds_h[271, :, :], k=1)
+axes[2,3].imshow(img_sagital_rotada, cmap='gray',aspect='auto')
+axes[2,3].set_title(f'Watersheds sin marcadores (Sagital 271)')
+axes[2,3].axis('off')
+fig.suptitle("Datos de entrenamiento",  fontsize=16)
+
+plt.tight_layout()
+plt.show()
+
+
+
+
+class MyClass:
+    def __init__(self):
+        self.attribute = "This is an attribute"
+    
+    def method(self):
+        print("This is my method.")
+        print("Let's print the attribute\n",self.attribute)
+
+
+# Dentro del parentesis no ponemos nada, pero si el método __init__ tuvieras
+# otros parámetros los tendríamos que poner dentro de este
+variable = MyClass()
+print(variable)
+
+
+print(variable.attribute, "\n")
+# Nuevamente acá no ponemos nada dentro de los paréntesis, pero si fuera necesario
+# se podría
+variable.method()
+
+
+class NNClassifier:
+    def _init_(self):
+        self.vectores= np.array([]) #atributo del vector de características
+        self.etiquetas= np.array([]) #atributo del vector de etiquetas
+
+    def fit(self,X,Y):
+        '''
+        :param X: Vectores de características
+        :param y: Labels de las imagenes
+        :return: self (Trained descriptor)
+        '''
+        # YOUR CODE HERE
+        self.vectores = np.array(X)
+        self.etiquetas = np.array(Y)
+        return self
+
+    def predict(self,X):
+        '''
+        :param X (array): Imagenes a predecir
+        :return: Arreglo de etiquetas predichas
+        '''
+        # YOUR CODE HERE
+        X = np.atleast_2d(X)  # Ensure X is always a 2D array
+        predict_vector = []
+        for x in X:
+            # Calcula la distancia euclídea entre el vector de prueba y todos los vectores de entrenamiento
+            distances = np.linalg.norm(self.vectores - x, axis = 1)
+            # Encuentra el índice del vector más cercano
+            closest_index = np.argmin(distances, axis = 0)
+            # Asigna la etiqueta correspondiente al vector más cercano
+            predict_vector.append(self.etiquetas[closest_index])
+
+        return np.array(predict_vector)  
+
+
+train_vector=[[0,0],[0,1],[1,0],[1,1]]
+train_labels=[0,0,1,1]
+predict=[[0,0.5],[1,0.5],[0.7,0],[0.3,0]]
+
+nn_classifier = NNClassifier()
+nn_classifier.fit(train_vector, train_labels)
+predict_vector = nn_classifier.predict(predict)
+
+
+predict_vector
+
+
+assert len(predict_vector)==len(predict)
+assert not np.sum(predict_vector-np.array([0,1,1,0])), 'Sus predicciones fueron erroneas'
+
+
+def voxels_train(fold,bins):
+    """Esta función se encarga de extraer los voxels de los volúmenes
+
+    Args:
+        fold (str): Fold para escoger volúmenes.
+        bins (int): Número de bins en el histograma
+
+    Returns:
+        (np.ndarray): Arreglo de histogramas,
+        (np.ndarray): Arreglo de etiquetas
+    """
+    np.random.seed(1)
+    
+    # Extraer tanto los volúmenes cómo las segmentaciones
+    paths_v = glob(os.path.join('DB',fold,'volume*'))
+    paths_s = glob(os.path.join('DB',fold,'segmentation*'))
+    v=[]
+    l=[]
+    
+    # Recorrer todos los volúmenes
+    for i, pv in tqdm(enumerate(paths_v)):
+        
+        # Abrir volúmenes de entrenamiento y segmentación
+        vol = nib.load(pv).get_fdata()
+        seg = nib.load(paths_s[i]).get_fdata()>0
+        x,y,z=vol.shape
+        
+        # Este for sirve para extraer los histogramas y etiquetas 100000 voxeles al azar
+        for _ in range(100000):
+            
+            # Elegir la coordenadas 3D al azar
+            r1=np.random.randint(10,x-11)
+            r2=np.random.randint(10,y-11)
+            r3=np.random.randint(10,z-11)
+            
+            # Obtener la etiqueta
+            etiqueta=int(seg[r1,r2,r3])
+            
+            # Extraer el histograma
+            h,_=np.histogram(vol[r1-10:r1+11,r2-10:r2+11,r3-10:r3+11],bins=bins)
+            
+            # Guardar el histograma y la etiqueta
+            v.append(h)
+            l.append(etiqueta)
+    
+    return v, l
+            
+
+
+train_data_total=voxels_train('train',20)
+
+
+etiquetas,cuenta=np.unique(train_data_total[1],return_counts=True)
+assert np.isclose(np.sum(np.array(train_data_total[1])==1),18233,0.1), f'Debería tener 300 datos positivos en su muestra y tiene {np.sum(np.array(train_data_total[1])==1)}'
+assert len(etiquetas)==2, 'Solo deberíamos tener 2 etiquetas en la muestra'
+assert np.max(etiquetas)==1 and np.min(etiquetas)==0, 'La maxima etiqueta debe ser 1 y la minima 0'
+assert len(train_data_total[0])>3000, f'Su muestra debe tener al menos 3000 datos y tiene {len(train_data_total[0])}'
+assert len(train_data_total[0][0])==20, 'Si se hizo un histograma de 20 bins, la dimensión del vector de caracteristicas debe ser 20'
+
+
+def vol_max_component(volume, max=None, min=None):
+    """Esta función realiza la segmentación mediante elemento conexo más grande en 3D
+
+    Args:
+        volume (np.ndarray): Volumen a segmentar
+        max (float | None): Limite inferior para realizar la segmentación
+        min (float | None): Limite superior para realiza la segmentación
+
+    Return:
+        (np.ndarray): Volumen segmentado
+    """
+
+    # ASegurarnos que al menos se ingrese un valor de corte
+    assert (
+        max is not None or min is not None
+    ), "Debe ingresar al menos un valor de corte"
+
+    # Si se ingresó un valor de corte máximo realizar la umbralización
+    # Sino se mantiene un volumen de unos
+    segment_vol_max = np.ones_like(volume)
+    if max is not None:
+        segment_vol_max = (volume < max).astype(int)
+
+    # Si se ingresó un valor de corte mínimo realizar la umbralización
+    # Sino se mantiene un volumen de unos
+    segment_vol_min = np.ones_like(volume)
+    if min is not None:
+        segment_vol_min = (volume > min).astype(int)
+
+    # Hallar la intersección entre los dos elementos
+    segment_vol = np.logical_and(segment_vol_max, segment_vol_min)
+
+    # Utilizar la función label para hallar los componentes conexos
+    segment_vol = label(segment_vol)
+
+    # Contar la cantidad la cantidad de voxeles que hacen parte del elemento conexo más grande
+    unique, unique_counts = np.unique(segment_vol, return_counts=True)
+
+    # Encuentra el índice del elemento conexo más grande sin contar el fondo
+    arg = np.argmax(unique_counts[1:])
+
+    # Hallar la etiqueta del elemento conexo más grande
+    # La suma de uno se debe a que el fondo tiene la etiqueta 0
+    label_max = unique[arg + 1]
+
+    # Finalmente, se saca un volumen binario con solo el componente conexo más grande
+    segment_vol = (segment_vol == label_max).astype(int)
+
+    return segment_vol
+
+
+def Jaccard_3D(Im,Gt):
+    '''
+    :param Im: Volumen de prediccion.
+    :param Gt: Segmentacion groundtruth.
+    '''
+    # YOUR CODE HERE
+    Gt_bin = np.logical_or(Gt == 1, Gt == 2)
+
+    # se usa las funciones logical para generar las interseccion y union
+    interseccion = np.logical_and(Im, Gt_bin).sum()
+    union = np.logical_or(Im, Gt_bin).sum()
+
+    J = interseccion / (union + 1e-6)
+    return J
+
+
+vol_val = nib.load(os.path.join('DB', 'valid', 'volume_34.nii.gz')).get_fdata()
+seg_val = (nib.load(os.path.join('DB', 'valid', 'segmentation_34.nii.gz')).get_fdata()>0).astype(np.uint8)
+
+result = vol_max_component(vol_val, 0.95, 0.5)
+
+print(f"El jaccard del volúmen resultante de nuestra segmentación con la función de elemento conexo más grande en 3D es: {Jaccard_3D(result, seg_val):.3f}")
+plt.imshow(result[:,:,114], cmap='gray')
+plt.axis("off")
+
+
+print(f"La cantidad de falsos positivos en el volumen segmentado es: {int(np.sum(result - np.logical_and(seg_val, result)))}")
+print(f"La cantidad de falsos negativos en el volumen segmentado es: {int(np.sum(seg_val - np.logical_and(seg_val, result)))}")
+
+
+### Creando el volumen a priori
+segmentacion_priori=''#volumen de segmentación a priori
+# YOUR CODE HERE
+
+# Se crea la segmentación a priori
+segmentacion_priori = vol_max_component(vol_val, 0.95, 0.5)
+
+# Se crea el volumen con h mínimos
+element = ball(5)
+borders_val = morph_gradient(vol_val,element)
+new_minima =  h_minima(borders_val, h=0.001)
+
+
+import numpy as np
+
+h, etiquetas = train_data_total
+nn_classifier = NNClassifier()  
+nn_classifier.fit(h, etiquetas)
+
+negative = 0
+positive = 0
+
+minima2 = np.zeros(new_minima.shape, dtype=np.int32)
+
+
+# Iterar sobre las dimensiones de h_minima
+for i in tqdm(range(new_minima.shape[0]), desc = "Voxels", unit="voxel"):
+        for j in range(new_minima.shape[1]):
+            for k in range(new_minima.shape[2]):
+                if new_minima[i][j][k] == 1 and segmentacion_priori[i,j,k] ==1:
+                    # Evitar índices fuera de rango
+                    h_predi, _ = np.histogram(vol_val[i-10:i+11, j-10:j+11, k-10:k+11], bins=20, range=(0,1))
+                    etiqueta = nn_classifier.predict([h_predi])
+                      
+                    
+                    if etiqueta[0] == 1:
+                        minima2[i][j][k] = 2
+                        positive += 1
+                    elif etiqueta[0]==0:
+                        minima2[i][j][k] = 1
+                        negative += 1
+
+
+fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+axes[0].imshow(borders_val[:, :, 65], cmap='gray')
+axes[0].set_title(f'MRI validación (Axial 65)')
+axes[0].axis('off')
+axes[0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1].imshow(seg_val[:, :, 65], cmap='gray')
+axes[1].set_title(f'Etiqueta Validación(Axial 65)')
+axes[1].axis('off')
+axes[1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+y_coords, x_coords = np.where(minima2[:, :, 65] == 2)  # Semillas positivas
+y_coords_neg, x_coords_neg = np.where(minima2[:, :, 65] == 1)  # Semillas negativas
+axes[0].scatter(x_coords, y_coords, color='b', marker='o', label="Semillas positivas")
+axes[0].scatter(x_coords_neg, y_coords_neg, color='r', marker='x', label="Semillas negativas")
+axes[0].axis('off')
+axes[0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1].scatter(x_coords, y_coords, color='b', marker='o', label="Semillas positivas")
+axes[1].scatter(x_coords_neg, y_coords_neg, color='r', marker='x', label="Semillas negativas")
+axes[1].axis('off')
+axes[1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+
+
+etiquetas, cantidades= np.unique(minima2,return_counts=True)
+assert negative and positive, 'Deben haber más de un positivo y un negativo en sus semillas, de no ser así, intente obtener más minimos con h-minimos bajando el h'
+assert len(minima2.shape)==3, 'Las dimensiones del volumen de minima2 deberían ser 3'
+assert np.sum(minima2[:,:,65]), 'Las semillas deben estar en el slice 65 axial'
+assert len(etiquetas)==3, f'Deberían haber 3 etiquetas diferentes en el volumen de etiquetas clasificadas y son {len(etiquetas)}'
+assert np.max(etiquetas)==2, f'El valor de la etiqueta maxima debe ser 2 y es {np.max(etiquetas)}'
+assert np.min(etiquetas)==0, f'El valor de la etiqueta minima debe ser 0 y es {np.min(etiquetas)}'
+assert cantidades[0]>=1 and cantidades[1]>=1 and cantidades[2]>=1, 'Debería haber al menos una etiqueta de cada una en su volumen'
+
+nn_classifier = NNClassifier()
+nn_classifier.fit(train_data_total[0], train_data_total[1])
+
+indicesx,indicesy,indicesz=np.where(minima2==2)
+h,_=np.histogram(vol_val[indicesx[0]-10:indicesx[0]+11,indicesy[0]-10:indicesy[0]+11,indicesz[0]-10:indicesz[0]+11],bins=20)
+result=nn_classifier.predict([h])
+assert result[0]==1
+
+indicesx,indicesy,indicesz=np.where(minima2==1)
+h,_=np.histogram(vol_val[indicesx[0]-10:indicesx[0]+11,indicesy[0]-10:indicesy[0]+11,indicesz[0]-10:indicesz[0]+11],bins=20)
+result=nn_classifier.predict([h])
+assert result[0]==0
+
+
+borders='' #Volumen del gradiente morfológico en escala de grises
+element = ball(1)
+borders = morph_gradient(vol_val,element)
+
+
+
+new_segment_vol_gray='' #Volumen segmentado con watersheds usando gradiente grises
+new_segment_vol_gray = watershed(borders, minima2)
+new_segment_vol_gray -= 1
+
+
+fig, axes = plt.subplots(3, 2, figsize=(10, 10))
+axes[0,0].imshow(seg_val[:, :, 65], cmap='gray')
+axes[0,0].set_title(f'Etiqueta (Axial 65)')
+axes[0,0].axis('off')
+axes[0,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[0,1].imshow(new_segment_vol_gray[:, :, 65], cmap='gray')
+axes[0,1].set_title(f'Segmentación (Axial 65)')
+axes[0,1].axis('off')
+axes[0,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+jiji= np.rot90(seg_val[:, 270, :], k=1)
+axes[1,0].imshow(jiji, cmap='gray')
+axes[1,0].set_title(f'Etiqueta (Coronal 270)')
+axes[1,0].axis('off')
+axes[1,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+jiji= np.rot90(new_segment_vol_gray[:, 270, :], k=1)
+axes[1,1].imshow(jiji, cmap='gray')
+axes[1,1].set_title(f'Segmentación (Coronal 270)')
+axes[1,1].axis('off')
+axes[1,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+juju= np.rot90(seg_val[271, :, :], k=1)
+axes[2,0].imshow(juju, cmap='gray')
+axes[2,0].set_title(f'Etiqueta (Sagital 271)')
+axes[2,0].axis('off')
+axes[2,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+juju= np.rot90(new_segment_vol_gray[271, :, :], k=1)
+axes[2,1].imshow(juju, cmap='gray')
+axes[2,1].set_title(f'Segmentación (Sagital 271)')
+axes[2,1].axis('off')
+axes[2,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+
+
+total_segments2 = len(np.unique(new_segment_vol_gray))
+print(f"El jaccard del volúmen resultante de nuestra segmentación con la función de elemento conexo más grande en 3D es: {Jaccard_3D(new_segment_vol_gray, seg_val):.3f}")
+print(f"Total number of segments: {total_segments2}")
+
+
+
+assert len(np.unique(new_segment_vol_gray))==2, 'Solo debeían haber 2 etiquetas en su volumen de segmentación'
+assert np.max(new_segment_vol_gray)==1, 'El maximo de su volumen de segmentación debería ser 1'
+assert np.min(new_segment_vol_gray)==0, 'El minimo de su volumen de segmentación debería ser 0'
+assert Jaccard_3D(new_segment_vol_gray,seg_val>0)>0.48, 'Su volumen seguramente fue mal segmentado, puede deberse a la clasificación de sus semillas, intente usar un hminima de 0.01'
+
+
+import sys
+
+def memory_usage():
+    memory_dict = {}
+    for name, var in globals().items():
+        memory_dict[name] = sys.getsizeof(var)
+    
+    return memory_dict
+    
+memory_dict = memory_usage()
+memory_list = sorted(memory_dict.items(), key=lambda item:item[1], reverse=True)
+
+for element in memory_list[:8]:
+    print(f"Variable: {element[0]:30} Tamaño: {element[1] / (1024 ** 2)} MB")
+
+# Si hay alguna variable que no vayas a utilizar puedes utilizar del para eliminarla de la siguiente manera
+# vol_prueba_liberacion = vol1
+# del vol_prueba_liberacion
+
+
+#vol_prueba_liberacion = seg_val
+del new_segment_vol_gray                       
+
+
+#Funciones de pre y post procesamiento 
+
+from skimage.morphology import remove_small_objects
+from scipy.ndimage import binary_fill_holes
+
+def max_component(Im,umbral,operador):
+    'Im (ndarray): Imagen a segmentar'
+    'umbral (float): Umbral a utilizar'
+    'operador (str): Puede ser "mayor" para > o "menor" para < segun se quiera umbralizar'
+    # YOUR CODE HERE
+    if operador == "mayor":
+        binary_mask = Im > umbral
+    elif operador == "menor":
+        binary_mask = Im < umbral
+    else:
+        return("Operador debe ser 'mayor' o 'menor'")
+
+    # Se usa la funcion labe de skimage.measure.label para darle un label/descripcion a cada componente conexo
+    labeled_mask = label(binary_mask)
+    # Se remueve el fondo o label==0
+    unique_labels = np.unique(labeled_mask)
+    unique_labels = unique_labels[unique_labels != 0]
+    if len(unique_labels) == 0:
+        return np.zeros_like(Im, dtype=bool)  #
+    # Se busca el componente conexo mas grande, despues de eliminar el fondo
+    max_label = max(unique_labels, key=lambda label: np.sum(labeled_mask == label))
+    # Crear una mascara del componente conexo mas grande
+    max_comp = labeled_mask == max_label
+    return max_comp
+
+def Vol2D_max_component(Vol,umbral,operador):
+    'Vol (ndarray): Imagen a segmentar'
+    'umbral (float): Umbral a utilizar'
+    'operador (str): Puede ser "mayor" para > o "menor" para < segun se quiera umbralizar'
+    #Se crea una imagen de 0 del tamaño del volumen
+    segmentacion=np.zeros(Vol.shape)
+    #Se hace un recorrido por cada slice del volumen y se le añade a segmentación
+    for i in range(Vol.shape[2]):
+        slice_segmentada=max_component(Vol[:,:,i],umbral,operador)
+        segmentacion[:,:,i]=slice_segmentada
+
+    return segmentacion
+
+def geodesic_dilatation(mask, E1, E2, max_iterations):
+    result= erosion(mask,E1)#mask.copy()
+    iterations = 0
+    while iterations < max_iterations:
+        dilated = dilation(result, E2)
+        new_resul = np.logical_and(mask, dilated)
+        if np.array_equal(new_resul, result):
+            break
+        result = new_resul
+        iterations +=1
+
+    return result, iterations
+
+def custom_liver_3d(radius_x, radius_y, radius_z):
+    size_x = 2 * radius_x + 1
+    size_y = 2 * radius_y + 1
+    size_z = 2 * radius_z + 1
+    center_x, center_y, center_z = radius_x, radius_y, radius_z
+    selem = np.zeros((size_x, size_y, size_z), dtype=np.uint8)
+    for x in range(size_x):
+        for y in range(size_y):
+            for z in range(size_z):
+                distance = np.sqrt(
+                    ((x - center_x) / radius_x) ** 2 +
+                    ((y - center_y) / radius_y) ** 2 +
+                    ((z - center_z) / radius_z) ** 2
+                )
+                if distance <= 1:
+                    selem[x, y, z] = 1
+    return selem
+
+selem = custom_liver_3d(7,5,5)
+
+from skimage.filters import threshold_otsu
+from skimage.measure import label, regionprops
+from skimage.morphology import ball
+from skimage.segmentation import watershed
+
+def hybrid_watershed_segmentation(vol_val):
+
+    threshold = threshold_otsu(vol_val)
+    binary_mask = vol_val > threshold
+
+    labeled_mask = label(binary_mask)
+    regions = regionprops(labeled_mask)
+    if len(regions) == 0:
+        raise ValueError("No encontrado!")
+    largest_region = max(regions, key=lambda r: r.area)
+    refined_seed = labeled_mask == largest_region.label
+
+    morph_gradient_volume = morph_gradient(vol_val,ball(1))
+
+    segmented_volume = watershed(morph_gradient_volume, minima2)
+    
+    segmented_volume = segmented_volume -1
+    
+    return segmented_volume
+
+
+
+def pre_procesamiento(vol):
+    voli = vol.copy()
+    # Realizamos apertura
+    voli = erosion(voli,selem)
+    voli = dilation(voli,selem)
+    vol_pre = vol - voli
+    #Creamos la máscara
+    mask = (vol_pre >= 0.2) & (vol_pre <= 1)
+    vol_pre_total =np.copy(vol)
+    vol_pre_total[mask] -= vol_pre[mask]
+    # Modificamos el volumen de procesamiento directamente
+    
+    return vol_pre_total
+
+
+from scipy.ndimage import binary_fill_holes
+def post_procesamiento(vol):
+    voli = vol.copy()
+    # Realizamos apertura
+    voli = erosion(voli,selem)
+    voli = dilation(voli,selem)
+    filled_vol = binary_fill_holes(voli)
+
+    return filled_vol
+
+
+vol_val = nib.load(os.path.join('DB', 'valid', 'volume_34.nii.gz')).get_fdata()
+seg_val = (nib.load(os.path.join('DB', 'valid', 'segmentation_34.nii.gz')).get_fdata()>0).astype(np.uint8)
+
+
+# Realizando preprocesamiento
+pre_ = pre_procesamiento(vol_val)
+
+
+# Utilizando el algoritmo de vol_max_component
+max_component_ = vol_max_component(pre_, 0.95, 0.5)
+
+
+# Utilizando el algoritmo de Vol2D_max_component
+max_2D = Vol2D_max_component(pre_, 0.8, "mayor")
+
+
+waterhibrido = hybrid_watershed_segmentation(pre_)
+
+
+# Utilizando el algoritmo de clasificación de semillas
+water_semi = watershed(borders, minima2)
+water_semi = water_semi - 1   
+
+
+# Realizando postprocesamiento
+post_max_component = post_procesamiento(max_component_)
+post_max_2D = post_procesamiento(max_2D)
+post_water_semi = post_procesamiento(water_semi)
+post_hibrido = post_procesamiento(waterhibrido)
+
+
+#Cálculamos qué jaccard antes del posprocesamiento
+Jmax_component = Jaccard_3D(max_component_,seg_val)
+Jmax_2D = Jaccard_3D(max_2D,seg_val)
+Jwater_semi = Jaccard_3D(water_semi, seg_val)
+Jhibrido = Jaccard_3D(waterhibrido,seg_val)
+
+print(f"Jaccard con vol_max_component: {Jmax_component}")
+print(f"Jaccard con Vol2D_max_component: {Jmax_2D}")
+print(f"Jaccard con clasificación de semillas: {Jwater_semi}")
+print(f"Jaccard con watershed y otsu: {Jmax_component}")
+
+
+
+#Cálculamos qué jaccard después del posprocesamiento
+Jmax_component_ = Jaccard_3D(post_max_component,seg_val)
+Jmax_2D_ = Jaccard_3D(post_max_2D,seg_val)
+Jwater_semi_ = Jaccard_3D(post_water_semi, seg_val)
+
+print(f"Jaccard con vol_max_component: {Jmax_component_}")
+print(f"Jaccard con Vol2D_max_component: {Jmax_2D_}")
+print(f"Jaccard con clasificación de semillas: {Jwater_semi_}")
+print(f"Jaccard con watershed y otsu: {Jmax_component}")
+
+
+
+fig, axes = plt.subplots(4, 3, figsize=(10, 10))
+
+axes[0,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[0,0].set_title(f'Segmentación_val (Axial 81)')
+axes[0,0].axis('off')
+axes[0,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[0,1].imshow(max_component_[:, :, 81], cmap='gray')
+axes[0,1].set_title(f'max_component_pre (Axial 81)')
+axes[0,1].axis('off')
+axes[0,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[0,2].imshow(post_max_component[:, :, 81], cmap='gray')
+axes[0,2].set_title(f'max_component_pos(Axial 81)')
+axes[0,2].axis('off')
+axes[0,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[1,0].set_title(f'Segmentación_val (Axial 81)')
+axes[1,0].axis('off')
+axes[1,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,1].imshow(max_2D[:, :, 81], cmap='gray')
+axes[1,1].set_title(f'max_2D_pre (Axial 81)')
+axes[1,1].axis('off')
+axes[1,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,2].imshow(post_max_2D[:, :, 81], cmap='gray')
+axes[1,2].set_title(f'max_2D_pos (Axial 81)')
+axes[1,2].axis('off')
+axes[1,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[2,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[2,0].set_title(f'Segmentación_val (Axial 81)')
+axes[2,0].axis('off')
+axes[2,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[2,1].imshow(water_semi[:, :, 81], cmap='gray')
+axes[2,1].set_title(f'water_semi_pre (Axial 81)')
+axes[2,1].axis('off')
+axes[2,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[2,2].imshow(post_water_semi[:, :, 81], cmap='gray')
+axes[2,2].set_title(f'water_semi_pos (Axial 81)')
+axes[2,2].axis('off')
+axes[2,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[3,0].set_title(f'Segmentación_val (Axial 81)')
+axes[3,0].axis('off')
+axes[3,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,1].imshow(waterhibrido[:, :, 81], cmap='gray')
+axes[3,1].set_title(f'water_hibrido_pre (Axial 81)')
+axes[3,1].axis('off')
+axes[3,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,2].imshow(post_hibrido[:, :, 81], cmap='gray')
+axes[3,2].set_title(f'water_hibrido_pos (Axial 81)')
+axes[3,2].axis('off')
+axes[3,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+
+post_mejor_max_2D = post_procesamiento(max_2D)
+
+
+Jmax_2D_mejorado = Jaccard_3D(post_mejor_max_2D,seg_val)
+print(Jmax_2D_mejorado)
+
+
+fig, axes = plt.subplots(4, 3, figsize=(10, 10))
+
+axes[0,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[0,0].set_title(f'Segmentación_val (Axial 65)')
+axes[0,0].axis('off')
+axes[0,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[0,1].imshow(max_component_[:, :, 81], cmap='gray')
+axes[0,1].set_title(f'max_component_pre (Axial 65)')
+axes[0,1].axis('off')
+axes[0,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[0,2].imshow(post_max_component[:, :, 81], cmap='gray')
+axes[0,2].set_title(f'max_component_pos(Axial 65)')
+axes[0,2].axis('off')
+axes[0,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[1,0].set_title(f'Segmentación_val (Axial 65)')
+axes[1,0].axis('off')
+axes[1,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,1].imshow(max_2D[:, :, 65], cmap='gray')
+axes[1,1].set_title(f'max_2D_pre (Axial 65)')
+axes[1,1].axis('off')
+axes[1,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,2].imshow(post_mejor_max_2D[:, :, 65], cmap='gray')
+axes[1,2].set_title(f'max_2D_pos_diferente (Axial 65)')
+axes[1,2].axis('off')
+axes[1,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[2,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[2,0].set_title(f'Segmentación_val (Axial 65)')
+axes[2,0].axis('off')
+axes[2,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[2,1].imshow(water_semi[:, :, 81], cmap='gray')
+axes[2,1].set_title(f'water_semi_pre (Axial 65)')
+axes[2,1].axis('off')
+axes[2,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[2,2].imshow(post_water_semi[:, :, 81], cmap='gray')
+axes[2,2].set_title(f'water_semi_pos (Axial 65)')
+axes[2,2].axis('off')
+axes[2,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[3,0].set_title(f'Segmentación_val (Axial 81)')
+axes[3,0].axis('off')
+axes[3,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,1].imshow(waterhibrido[:, :, 81], cmap='gray')
+axes[3,1].set_title(f'water_hibrido_pre (Axial 81)')
+axes[3,1].axis('off')
+axes[3,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,2].imshow(post_hibrido[:, :, 81], cmap='gray')
+axes[3,2].set_title(f'water_hibrido_pos (Axial 81)')
+axes[3,2].axis('off')
+axes[3,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+
+def Segmentacion(vol):
+    # Realizamos preprocesamiento
+    pre_ = pre_procesamiento(vol)
+
+    # Utilizando el algoritmo de Vol2D_max_component
+    max_2D = Vol2D_max_component(pre_, 0.8, "mayor")
+    
+    # Realizamos posprocesamiento
+    post_mejor_max_2D = post_procesamiento(max_2D)
+        
+    return post_mejor_max_2D
+
+
+mean_jaccard = 0.0
+vol_val_paths = glob(os.path.join('DB','valid','volume_*.nii.gz'))
+seg_val_paths = glob(os.path.join('DB','valid','segmentation_*.nii.gz'))
+pbar = tqdm(total=len(vol_val_paths))
+for i, (vol_val_path, seg_val_path) in enumerate(zip(vol_val_paths, seg_val_paths), start = 1):
+    vol_val = nib.load(vol_val_path).get_fdata()
+    seg_val = nib.load(seg_val_path).get_fdata()
+    seg_total = Segmentacion(vol_val)
+    jaccard_val = Jaccard_3D(seg_total,seg_val)
+    mean_jaccard += (jaccard_val - mean_jaccard) / i
+    pbar.update(1)
+pbar.close()
+
+
+print(mean_jaccard)
+
+
+assert len(np.unique(seg_total))==2, 'Solo deberían haber 2 etiquetas en su volumen'
+assert np.max(seg_total)==1, 'El maximo de su segmentación debería ser 1'
+assert mean_jaccard>0.50, 'Su experimentación debería superar el 0.50 de Jaccard, el baseline'
+
+
+print(mean_jaccard)
+
+
+mean_jaccard = 0.0
+vol_test_paths = glob(os.path.join('DB','test','volume_*.nii.gz'))
+seg_test_paths = glob(os.path.join('DB','test','segmentation_*.nii.gz'))
+pbar = tqdm(total=len(vol_test_paths))
+for i, (vol_test_path, seg_test_path) in enumerate(zip(vol_test_paths, seg_test_paths), start=1):
+    vol_test = nib.load(vol_test_path).get_fdata()
+    seg_test = nib.load(seg_test_path).get_fdata()
+    seg_total = Segmentacion(vol_test)
+    jaccard_test = Jaccard_3D(seg_total,seg_test)
+    mean_jaccard += (jaccard_test - mean_jaccard) / i
+    pbar.update(1)
+pbar.close()
+
+
+assert mean_jaccard>0.48, 'Su algoritmo final debería superar el baseline'
+
+
+print(mean_jaccard)
+
+
+vol_val = nib.load(os.path.join('DB', 'valid', 'volume_34.nii.gz')).get_fdata()
+seg_val = (nib.load(os.path.join('DB', 'valid', 'segmentation_34.nii.gz')).get_fdata()>0).astype(np.uint8)
+fig, axes = plt.subplots(4, 3, figsize=(10, 10))
+
+axes[0,0].imshow(seg_val[:, :, 65], cmap='gray')
+axes[0,0].set_title(f'Segmentación_val (Axial 65)')
+axes[0,0].axis('off')
+axes[0,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[0,1].imshow(max_2D[:, :, 65], cmap='gray')
+axes[0,1].set_title(f'max_2D_pre (Axial 65)')
+axes[0,1].axis('off')
+axes[0,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[0,2].imshow(post_mejor_max_2D[:, :, 65], cmap='gray')
+axes[0,2].set_title(f'max_2D_pos(Axial 65)')
+axes[0,2].axis('off')
+axes[0,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,0].imshow(seg_val[:, :, 10], cmap='gray')
+axes[1,0].set_title(f'Segmentación_val (Axial 10)')
+axes[1,0].axis('off')
+axes[1,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,1].imshow(max_2D[:, :, 10], cmap='gray')
+axes[1,1].set_title(f'max_2D_pre (axial 10)')
+axes[1,1].axis('off')
+axes[1,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[1,2].imshow(post_mejor_max_2D[:, :, 10], cmap='gray')
+axes[1,2].set_title(f'max_2D_pos (axial 10)')
+axes[1,2].axis('off')
+axes[1,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+
+axes[2,0].imshow(seg_val[:, :, 81], cmap='gray')
+axes[2,0].set_title(f'Segmentación_val (Axial 81)')
+axes[2,0].axis('off')
+axes[2,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[2,1].imshow(max_2D[:, :, 81], cmap='gray')
+axes[2,1].set_title(f'max_2D_pre (Axial 81)')
+axes[2,1].axis('off')
+axes[2,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[2,2].imshow(post_mejor_max_2D[:, :, 81], cmap='gray')
+axes[2,2].set_title(f'max_2D_pos (Axial 81)')
+axes[2,2].axis('off')
+axes[2,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,0].imshow(seg_val[:, :, 50], cmap='gray')
+axes[3,0].set_title(f'Segmentación_val (Axial 50)')
+axes[3,0].axis('off')
+axes[3,0].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,1].imshow(max_2D[:, :, 50], cmap='gray')
+axes[3,1].set_title(f'max_2D_pre (Axial 50)')
+axes[3,1].axis('off')
+axes[3,1].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+axes[3,2].imshow(post_mejor_max_2D[:, :, 50], cmap='gray')
+axes[3,2].set_title(f'max_2D_pos (Axial 50)')
+axes[3,2].axis('off')
+axes[3,2].set_aspect('auto')  # Ajustar el aspecto para evitar distorsión
+
+
+from utils import *
+converter("Entrega 3")
+
+
